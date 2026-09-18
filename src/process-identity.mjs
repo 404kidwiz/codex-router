@@ -1,6 +1,14 @@
 import { spawnSync } from "node:child_process";
 
-const WINDOWS_PROCESS_PROBE_TIMEOUT_MS = 5_000;
+import { startupTimeoutMs } from "./startup-timeout.mjs";
+
+// Bound for the Windows powershell probes below. Overridable for slow hosts
+// (VDI Task Scheduler ancestry); the default is unchanged. This helper also
+// serves runtime stop/status probes, which keep the default unless the
+// background-service environment raises it.
+function windowsProbeTimeoutMs() {
+  return startupTimeoutMs("CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS", 5_000);
+}
 
 // A PID alone is not an identity: the operating system reuses them, and a
 // router that remembers only a number can eventually send a signal to whatever
@@ -34,7 +42,7 @@ export function processStartIdentityProbe(
         {
           encoding: "utf8",
           windowsHide: true,
-          timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
+          timeout: windowsProbeTimeoutMs(),
         },
       );
       const identity = String(result.stdout || "").trim();
@@ -76,7 +84,7 @@ export function processCommandLine(
           {
             encoding: "utf8",
             windowsHide: true,
-            timeout: WINDOWS_PROCESS_PROBE_TIMEOUT_MS,
+            timeout: windowsProbeTimeoutMs(),
           },
         );
         const value = String(result.stdout || "").trim();

@@ -17,6 +17,7 @@ import {
   loopback,
 } from "./paths.mjs";
 import { SHUTDOWN_DRAIN_MS, SHUTDOWN_FLUSH_MS } from "./http-utils.mjs";
+import { startupTimeoutMs } from "./startup-timeout.mjs";
 import { waitForHealth as pollHealth } from "./health-probe.mjs";
 import { describeChildExit, fatalExitFollowUp } from "./fatal-exit.mjs";
 import { gatewaySupervisorLimits, superviseGateway } from "./gateway-supervisor.mjs";
@@ -300,6 +301,14 @@ function stopChildren() {
 const FRONTEND = { script: "router.mjs", service: "codex-router", label: "Codex router" };
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stopChildren);
 
+// Boot-health allowance for spawned children (forwarders, router frontend).
+// Slow hosts (VDI Task Scheduler ancestry adds ~60 s per spawn level) raise
+// this via CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS; the default is unchanged.
+// The LiteLLM gateway keeps its own longer allowance below. Runtime request,
+// inference, and retry timeouts are unaffected.
+const STARTUP_CHILD_HEALTH_TIMEOUT_MS =
+  startupTimeoutMs("CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS", 30_000);
+
 async function main() {
   // These forwarders use separate ports and do not depend on one another.
   // Start all of them before waiting so a cold service does not pay their
@@ -325,7 +334,7 @@ async function main() {
       "OAuth forwarder",
       loopback(PORTS.oauth, "/health"),
       { Authorization: `Bearer ${internalKey}` },
-      30_000,
+      STARTUP_CHILD_HEALTH_TIMEOUT_MS,
       undefined,
       kimiForwarder,
     ),
@@ -333,7 +342,7 @@ async function main() {
       "API forwarder",
       loopback(PORTS.api, "/health"),
       { Authorization: `Bearer ${internalKey}` },
-      30_000,
+      STARTUP_CHILD_HEALTH_TIMEOUT_MS,
       undefined,
       api,
     ),
@@ -341,7 +350,7 @@ async function main() {
       "Grok OAuth forwarder",
       loopback(PORTS.grokOauth, "/health"),
       { Authorization: `Bearer ${internalKey}` },
-      30_000,
+      STARTUP_CHILD_HEALTH_TIMEOUT_MS,
       undefined,
       grokForwarder,
     ),
@@ -351,7 +360,7 @@ async function main() {
           "Antigravity OAuth forwarder",
           loopback(PORTS.antigravityOauth, "/health"),
           { Authorization: `Bearer ${internalKey}` },
-          30_000,
+          STARTUP_CHILD_HEALTH_TIMEOUT_MS,
           undefined,
           antigravityForwarder,
         ),
@@ -367,7 +376,7 @@ async function main() {
           "Devin CLI forwarder",
           loopback(PORTS.devinCli, "/health"),
           { Authorization: `Bearer ${internalKey}` },
-          30_000,
+          STARTUP_CHILD_HEALTH_TIMEOUT_MS,
           undefined,
           devinForwarder,
         ),
@@ -387,12 +396,15 @@ async function main() {
   // LiteLLM cold starts can take minutes when launchd starves the job under
   // system load; killing it mid-import restarts the import from scratch and
   // the service loops forever, so wait long enough for a starved import.
+  // Slow hosts (VDI Task Scheduler ancestry plus a saturated CPU) raise this
+  // via CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS; the default is unchanged.
+  // This is a boot-health allowance, not an inference or request timeout.
   const gatewayHealthy = (child) =>
     waitForHealth(
       "LiteLLM gateway",
       loopback(PORTS.gateway, "/health/liveliness"),
       { Authorization: `Bearer ${internalKey}` },
-      300_000,
+      startupTimeoutMs("CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS", 300_000),
       undefined,
       child,
     );
@@ -406,7 +418,7 @@ async function main() {
     frontend.label,
     loopback(PORTS.router, "/health"),
     {},
-    30_000,
+    STARTUP_CHILD_HEALTH_TIMEOUT_MS,
     frontendService,
     router,
   );
@@ -445,7 +457,7 @@ async function main() {
       "Cursor public edge",
       loopback(PORTS.cursorPublic, "/health"),
       {},
-      30_000,
+      STARTUP_CHILD_HEALTH_TIMEOUT_MS,
       "codex-router-cursor-edge",
       cursorEdge,
     );

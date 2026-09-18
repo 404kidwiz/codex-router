@@ -40,7 +40,7 @@ export function createRequestProgress({ now = Date.now, recentLimit = 128, recen
         },
         attempt() {
           if (record.state !== "running") return;
-          update({ upstreamAttempts: (record.upstreamAttempts || 0) + 1, phase: "awaiting_upstream", terminalEvent: undefined, terminalStatus: undefined });
+          update({ upstreamAttempts: (record.upstreamAttempts || 0) + 1, phase: "awaiting_upstream", terminalEvent: undefined, terminalStatus: undefined, terminalFailureSeen: undefined });
         },
         headers() {
           update({ lastHeadersAt: now(), ...(record.state === "running" ? { phase: "awaiting_event" } : {}) });
@@ -48,6 +48,10 @@ export function createRequestProgress({ now = Date.now, recentLimit = 128, recen
         event(payload) {
           if (!payload || typeof payload !== "object") return;
           const type = payload.type;
+          // Metadata-only stream shape for truncated-stream diagnosis
+          // (first/last event type, completed seen). Never stores headers,
+          // bodies, prompts, tool args, keys, or URLs.
+          const safeType = typeof type === "string" && type.length <= 64 ? type : undefined;
           let phase;
           if (typeof type === "string" && type.startsWith("response.reasoning")) phase = "reasoning";
           else if (type === "response.output_text.delta") phase = "text";
@@ -62,7 +66,10 @@ export function createRequestProgress({ now = Date.now, recentLimit = 128, recen
             typeof embeddedStatus === "string" && embeddedStatus !== "completed";
           const failed = unsuccessfulCompletion || ["response.failed", "response.incomplete", "error"].includes(type);
           update({
-            ...(failed ? { terminalEvent: type } : {}),
+            ...(safeType && !record.firstEventType ? { firstEventType: safeType } : {}),
+            ...(safeType ? { lastEventType: safeType } : {}),
+            ...(type === "response.completed" && !unsuccessfulCompletion ? { completedSeen: true } : {}),
+            ...(failed ? { terminalEvent: type, terminalFailureSeen: true } : {}),
             ...(unsuccessfulCompletion
               ? { terminalStatus: /^[a-z_]{1,32}$/.test(embeddedStatus) ? embeddedStatus : "unknown" }
               : {}),

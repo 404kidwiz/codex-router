@@ -65,6 +65,7 @@ import {
   createResponsesStreamTransform,
   normalizeOpenAIRequest,
 } from "./openai-adapters.mjs";
+import { normalizeAzureOpenAIResponsesRequest } from "./azure-openai-compat.mjs";
 import { threadIdFromHeaders } from "./codex-session-names.mjs";
 import { applyOpenCodeSessionHeaders, isOpenCodeProvider } from "./opencode-session.mjs";
 import {
@@ -1028,6 +1029,13 @@ function normalizeBody(buffer, contentType, route) {
       delete payload.thinking;
     }
     payload = normalizeOpenAIRequest(payload);
+    // Azure-only: strip image-generation tool shapes Azure's Responses
+    // surface rejects. Scoped to azure-kmamc + /responses; all other
+    // providers and routes pass through untouched.
+    payload = normalizeAzureOpenAIResponsesRequest(payload, {
+      providerId: model.provider,
+      route,
+    });
     // The router labels routed assistant messages with Codex's `phase`, and
     // Codex replays it on every later turn. An operator-configured Responses
     // endpoint is an unknown validator, so it gets the pre-label history

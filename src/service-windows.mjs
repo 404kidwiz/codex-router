@@ -93,6 +93,22 @@ function wrapper() {
     // would otherwise encode stdout as the legacy code page.
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
+    // Slow-host startup allowances (VDI Task Scheduler ancestry adds ~60 s
+    // of process-start latency per level, which trips the shipped boot
+    // bounds and crash-loops the service). Each knob is startup-only with
+    // its shipped default intact when unset; these values apply to the
+    // background service environment generated here. Derived as ~5x the
+    // worst observed per-level spawn latency, rounded to five minutes.
+    CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS: "300000",
+    // PowerShell cold start under scheduler ancestry measured at ~115 s for a
+    // trivial probe and higher under load spikes; allow fifteen minutes.
+    CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS: "900000",
+    CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: "900000",
+    CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS: "300000",
+    // Gateway cold import under a saturated CPU needs more than the shipped
+    // five minutes after a ~60 s spawn; boot-health only, not inference.
+    CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS: "900000",
     ...(process.env.KIMI_CODE_HOME ? { KIMI_CODE_HOME: process.env.KIMI_CODE_HOME } : {}),
   };
   return `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${Object.entries(variables)
