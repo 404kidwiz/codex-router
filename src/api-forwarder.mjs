@@ -65,7 +65,10 @@ import {
   createResponsesStreamTransform,
   normalizeOpenAIRequest,
 } from "./openai-adapters.mjs";
-import { normalizeAzureOpenAIResponsesRequest } from "./azure-openai-compat.mjs";
+import {
+  azureCollaborationToolNames,
+  normalizeAzureOpenAIResponsesRequest,
+} from "./azure-openai-compat.mjs";
 import { threadIdFromHeaders } from "./codex-session-names.mjs";
 import { applyOpenCodeSessionHeaders, isOpenCodeProvider } from "./opencode-session.mjs";
 import {
@@ -1017,6 +1020,7 @@ function normalizeBody(buffer, contentType, route) {
   // Responses providers get one checked boundary here. The request remains a
   // Responses request, but legacy aliases are normalized before any provider
   // sees it and the original payload remains available for retries.
+  let azureCollaborationNames;
   if (provider.protocol === "openai-responses") {
     if (usesDeepSeekResponses(model)) {
       // Codex subagent overrides may supply both spellings. Responses uses
@@ -1029,6 +1033,10 @@ function normalizeBody(buffer, contentType, route) {
       delete payload.thinking;
     }
     payload = normalizeOpenAIRequest(payload);
+    azureCollaborationNames = azureCollaborationToolNames(payload.tools, {
+      providerId: model.provider,
+      route,
+    });
     // Azure-only: strip image-generation tool shapes Azure's Responses
     // surface rejects. Scoped to azure-kmamc + /responses; all other
     // providers and routes pass through untouched.
@@ -1461,6 +1469,7 @@ function normalizeBody(buffer, contentType, route) {
     payload,
     ...(targetPath ? { targetPath } : {}),
     responseAdapter: provider.protocol === "openai-responses" ? "responses" : undefined,
+    azureCollaborationNames,
   };
 }
 
@@ -1536,6 +1545,11 @@ async function relayUpstreamResponse(
   const flatToNative = (responsesStream || responsesJson) && !usesDeepSeekResponses(normalized.model)
     ? buildNamespaceLookupsFromTools(normalized.payload?.tools)
     : new Map();
+  for (const name of normalized.azureCollaborationNames || []) {
+    const native = { namespace: "collaboration", name, plaintextCollaboration: true };
+    flatToNative.set(`agents__${name}`, native);
+    flatToNative.set(`agents.${name}`, native);
+  }
   
   const transform = [
     responsesStream ? createResponsesStreamTransform(flatToNative) : undefined,

@@ -637,6 +637,10 @@ function isSubagentSpawnCall(item) {
 // untouched.
 export function injectSessionModelForSpawnCalls(item, model) {
   if (!isSpawnModelCall(item)) return item;
+  if (model?.preserveDefaultSubagentModel === true && isSubagentSpawnCall(item)) {
+    return item;
+  }
+  if (model && typeof model === "object") model = model.model;
   if (typeof model !== "string" || !model) return item;
   if (typeof item.arguments !== "string") return item;
   if (!jsonArgumentsAreUnambiguous(item.arguments, { allowEmpty: true })) return item;

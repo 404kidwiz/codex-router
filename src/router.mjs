@@ -4643,17 +4643,18 @@ async function handleResponses(request, response, requestUrl) {
         ? leakedToolCallRecoveryTransform(contentType)
         : undefined;
       if (leakedToolCalls) transforms.push(leakedToolCalls);
-      // Restore flattened namespace calls for routed chat-completions providers
-      // and pin an omitted spawn_agent model to every routed parent, including
-      // providers that already speak Responses. Also inject missing finished-
-      // child interrupts for both routed and native multi-agent parents (San
-      // Francisco uses native GPT).
+      // Restore flattened namespace calls for routed providers and inject
+      // missing finished-child interrupts. Azure collaboration spawns keep an
+      // omitted model absent so Codex can select its configured subagent
+      // default; local create_thread and other providers retain inheritance.
       if (route || pendingInterrupts.length > 0) {
         transforms.push(
           new NamespaceToolCallTransform(
             flattenedNamespaces,
             contentType,
-            route?.slug,
+            route?.provider === "azure-kmamc"
+              ? { model: route.slug, preserveDefaultSubagentModel: true }
+              : route?.slug,
             // A native stream is attached only for the injection, so it must
             // not pick up the routed-provider rewrites on the way through.
             { pendingInterrupts, injectOnly: !route },

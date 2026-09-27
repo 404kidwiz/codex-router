@@ -84,15 +84,38 @@ function restoreNamespacedFunctionCall(call, flatToNative) {
   const callName = call.name;
   if (typeof callName !== "string") return call;
   
-  const native = flatToNative.get(callName);
+  const native = flatToNative.get(
+    call.namespace ? `${call.namespace}${NAMESPACE_DELIMITER}${callName}` : callName,
+  );
   if (!native) return call;
-  
-  // Return the call with namespace restored and flattened name removed
-  return {
+
+  const restored = {
     ...call,
     name: native.name,
     namespace: native.namespace,
   };
+  if (
+    native.plaintextCollaboration === true &&
+    ["spawn_agent", "send_message", "followup_task"].includes(native.name) &&
+    restored.encrypted_function_args === undefined &&
+    typeof restored.arguments === "string"
+  ) {
+    let message;
+    try {
+      message = JSON.parse(restored.arguments)?.message;
+    } catch {
+      // An incomplete call cannot prove a plaintext message.
+    }
+    if (
+      typeof message === "string" && message.trim() &&
+      !/^gAAAAA[A-Za-z0-9_-]+={0,2}$/.test(message) &&
+      !/^[A-Za-z0-9+/_=-]{40,}$/.test(message) &&
+      !/[\u0000-\u001f]/.test(message)
+    ) {
+      restored.encrypted_function_args = [];
+    }
+  }
+  return restored;
 }
 
 function adapterError(message, code = "invalid_responses_request") {
@@ -465,13 +488,12 @@ function normalizeResponsesEvent(frame, state, flatToNative) {
     state.outputIndex = index + 1;
     if (!validOutputIndex(data.output_index)) data.output_index = index;
     
-    // Restore namespace for function call items
-    if (item.type === "function_call" && flatToNative && flatToNative.size > 0) {
-      const restored = restoreNamespacedFunctionCall(item, flatToNative);
-      if (restored !== item) {
-        data.item = restored;
-      }
-    }
+  }
+  if (
+    (data.type === "response.output_item.added" || data.type === "response.output_item.done") &&
+    data.item?.type === "function_call" && flatToNative?.size > 0
+  ) {
+    data.item = restoreNamespacedFunctionCall(data.item, flatToNative);
   }
   if (data.type === "response.function_call_arguments.delta" || data.type === "response.function_call_arguments.done") {
     const key = data.call_id || data.item_id;
@@ -498,6 +520,9 @@ function normalizeResponsesEvent(frame, state, flatToNative) {
       return invalidStream(state, "The Responses completion used a different response ID.");
     }
     if (state.responseId && !data.response.id) data.response.id = state.responseId;
+    if ([...flatToNative.values()].some((native) => native.plaintextCollaboration === true)) {
+      data.response = normalizeResponseBody(data.response, flatToNative);
+    }
   }
   return serializeFrame(frame, data);
 }
