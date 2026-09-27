@@ -31,7 +31,7 @@ import { venvRuntimeProblem } from "./venv-runtime.mjs";
 import { dependencyRepairHint } from "./dependency-repair.mjs";
 import {
   clearServiceProcessState,
-  recordsServiceProcess,
+  shouldRecordServiceProcess,
   writeServiceProcessState,
 } from "./service-process.mjs";
 import {
@@ -529,7 +529,7 @@ try {
   // before it launches a replacement. Other platforms keep their native
   // supervisor semantics and do not need this marker, and neither does the
   // unmanaged foreground supervisor, which the service manager never owns.
-  if (recordsServiceProcess()) {
+  if (shouldRecordServiceProcess()) {
     writeServiceProcessState();
     serviceProcessRecorded = true;
   }

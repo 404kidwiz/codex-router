@@ -34,15 +34,17 @@ function safePid(pid) {
 // src/start.mjs, so it could never pass the entrypoint check below -- and it
 // must not try: this record is the Windows service manager's handle on the
 // OS-service payload, a direct src/start.mjs, and only that payload refuses to
-// run without it. A foreground router stays out of `codex-router.ps1 stop`'s
-// reach, as it already is on POSIX.
+// run without it. The opt-out is an explicit flag rather than a comparison of
+// process.argv[1] with this checkout's start.mjs because the flag fails
+// closed: every other importer still records, where a casing or junction
+// difference in argv would let a managed start silently skip its record.
 let foregroundSupervisor = false;
 
 export function markForegroundSupervisor() {
   foregroundSupervisor = true;
 }
 
-export function recordsServiceProcess({
+export function shouldRecordServiceProcess({
   platform = process.platform,
   foreground = foregroundSupervisor,
 } = {}) {

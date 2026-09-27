@@ -8,7 +8,7 @@ import test from "node:test";
 import {
   buildServiceProcessState,
   clearServiceProcessState,
-  recordsServiceProcess,
+  shouldRecordServiceProcess,
   serviceProcessOwns,
   writeServiceProcessState,
 } from "../src/service-process.mjs";
@@ -154,12 +154,13 @@ test("service process state is private, readable, and removable", () => {
 // whose command line never names src/start.mjs. While the foreground supervisor
 // still claimed this record it failed on every Windows install with a working
 // LiteLLM environment: "could not verify its own start.mjs process identity".
-// CI never reached the claim, because start.mjs stops at its LiteLLM check first.
+// The one test that booted that entry stopped at its LiteLLM preflight, so no
+// test reached the claim from there; test/startup-cleanup.test.mjs now does.
 test("only the OS-service payload claims the Windows service-process record", () => {
-  assert.equal(recordsServiceProcess({ platform: "win32", foreground: false }), true);
-  assert.equal(recordsServiceProcess({ platform: "win32", foreground: true }), false);
-  assert.equal(recordsServiceProcess({ platform: "darwin", foreground: false }), false);
-  assert.equal(recordsServiceProcess({ platform: "linux", foreground: false }), false);
+  assert.equal(shouldRecordServiceProcess({ platform: "win32", foreground: false }), true);
+  assert.equal(shouldRecordServiceProcess({ platform: "win32", foreground: true }), false);
+  assert.equal(shouldRecordServiceProcess({ platform: "darwin", foreground: false }), false);
+  assert.equal(shouldRecordServiceProcess({ platform: "linux", foreground: false }), false);
   // The foreground command line cannot pass the entrypoint check, which is why
   // the supervisor has to withdraw its claim rather than attempt it.
   assert.equal(
@@ -181,9 +182,9 @@ test("marking the foreground supervisor withdraws its claim on the record", () =
   const moduleUrl = new URL("../src/service-process.mjs", import.meta.url).href;
   const script = [
     `const service = await import(${JSON.stringify(moduleUrl)});`,
-    'const before = service.recordsServiceProcess({ platform: "win32" });',
+    'const before = service.shouldRecordServiceProcess({ platform: "win32" });',
     "service.markForegroundSupervisor();",
-    'const after = service.recordsServiceProcess({ platform: "win32" });',
+    'const after = service.shouldRecordServiceProcess({ platform: "win32" });',
     "process.stdout.write(JSON.stringify({ before, after }));",
   ].join("\n");
   const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
