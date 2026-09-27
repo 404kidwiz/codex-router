@@ -75,6 +75,18 @@ test("foreground supervisor holds service lifecycle ownership", () => {
   assert.doesNotMatch(supervisor, /withServiceOperationLock/);
 });
 
+// The Windows claim itself cannot run on POSIX CI, and Windows CI stops at the
+// missing LiteLLM before start.mjs reaches it, so guard the shape: the launcher
+// withdraws the claim before start.mjs loads, and start.mjs honours it.
+test("the foreground supervisor never claims the managed Windows service record", () => {
+  const supervisor = readFileSync(path.join(root, "src", "start.mjs"), "utf8");
+  const launcher = readFileSync(path.join(root, "src", "foreground-start.mjs"), "utf8");
+  const mark = launcher.indexOf("markForegroundSupervisor();");
+  assert.notEqual(mark, -1);
+  assert.ok(mark < launcher.indexOf('import("./start.mjs")'));
+  assert.match(supervisor, /if \(recordsServiceProcess\(\)\) \{\s*writeServiceProcessState\(\);/);
+});
+
 test("foreground supervisor waits for existing lifecycle ownership before booting", async () => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "codex-router-foreground-lock-"));
   let child;

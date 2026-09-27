@@ -28,6 +28,27 @@ function safePid(pid) {
   return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
+// `bin/start --foreground` and `codex-router.ps1 start --foreground` enter
+// through src/foreground-start.mjs, the explicit unmanaged debugging
+// supervisor. Its command line names foreground-start.mjs, never
+// src/start.mjs, so it could never pass the entrypoint check below -- and it
+// must not try: this record is the Windows service manager's handle on the
+// OS-service payload, a direct src/start.mjs, and only that payload refuses to
+// run without it. A foreground router stays out of `codex-router.ps1 stop`'s
+// reach, as it already is on POSIX.
+let foregroundSupervisor = false;
+
+export function markForegroundSupervisor() {
+  foregroundSupervisor = true;
+}
+
+export function recordsServiceProcess({
+  platform = process.platform,
+  foreground = foregroundSupervisor,
+} = {}) {
+  return platform === "win32" && !foreground;
+}
+
 export function buildServiceProcessState({
   pid = process.pid,
   platform = process.platform,
