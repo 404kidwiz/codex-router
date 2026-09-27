@@ -1,4 +1,7 @@
 const DEFAULT_LOCAL_TIMEOUT_SECONDS = 600;
+// Round safety cushion, not measurement-derived: keep Undici's header/body
+// idle bound beyond the configured local request timeout so the application
+// timeout remains authoritative instead of the transport winning the race.
 const TRANSPORT_MARGIN_MS = 60_000;
 
 export function localTimeoutSeconds(environment = process.env) {
