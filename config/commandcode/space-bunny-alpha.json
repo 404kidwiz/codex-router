@@ -8,7 +8,7 @@
       "provider": "commandcode",
       "listed": true,
       "displayName": "Space Bunny Alpha (Command Code)",
-      "description": "Space Bunny Alpha through the Command Code Provider API. Text input; 1M-token context; medium and max effort verified.",
+      "description": "Space Bunny Alpha through the Command Code Provider API. Text and image input; 1M-token context; medium and max effort verified.",
       "priority": 130,
       "defaultEffort": "max",
       "reasoningLevels": [
@@ -24,9 +24,10 @@
       "contextWindow": 1000000,
       "autoCompact": 700000,
       "inputModalities": [
-        "text"
+        "text",
+        "image"
       ],
-      "compHash": "commandcode-stealth-space-bunny-alpha-v1"
+      "compHash": "commandcode-stealth-space-bunny-alpha-v2"
     }
   ]
 }
