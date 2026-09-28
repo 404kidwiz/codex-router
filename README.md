@@ -667,6 +667,21 @@ The Jev route is intentionally unlisted, so it cannot appear in Codex's
 conversational model picker. It is for an explicit local integration such as
 jev-pruner, never a substitute for Codex native compaction.
 
+Connecting OpenRouter makes this Decisions route available to a client that
+calls `/v1/decisions`. Do not add a Jev model in **Models** to turn on output
+pruning. In particular, OpenRouter's `typesafe/jev-router` is a conversational
+model route: selecting it changes the assistant used by Codex. It does not
+activate the hidden `openrouter-decisions/jev-latest` route or install a tool
+output hook. A Decisions client must be configured separately to call the
+endpoint; automatic Codex tool output pruning needs its own hook.
+
+If the Router goes offline during setup, use **Status → Service health → Fix**
+in Control Center, then check Router health and return to a known working chat
+model. Fix repairs and restarts the installed Router, so routed chats may be
+interrupted. It does not enable a Decisions client. See the
+[provider and model guide](docs-site/src/content/docs/reference/providers-and-models.md)
+for the general boundary between chat models and tool APIs.
+
 ### opencode (Go subscription and Zen)
 
 The opencode provider family covers both of opencode's endpoints with one
