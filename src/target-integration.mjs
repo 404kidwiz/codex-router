@@ -72,6 +72,7 @@ export async function runTargetPublicationProcess(
   {
     signal,
     deadline,
+    client = script,
     sourceRoot = SOURCE_ROOT,
     environment = process.env,
     executable = routerNodeBinary(environment),
@@ -90,9 +91,22 @@ export async function runTargetPublicationProcess(
       run,
     },
   );
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `Client publication exited with status ${result.status}.`);
-  }
+  if (result.status !== 0) throw new Error(publicationFailure(client, result));
+}
+
+// A publisher that fails dies on an uncaught error, so its stderr is a Node
+// crash banner, and a publication run from inside another process nests one
+// banner in the next. Relaying all of it buried the cause and never said which
+// client was left behind. The first line names the client and nothing else,
+// because the Control Center drops any error line that mentions a credential;
+// the innermost thrown message follows on its own line.
+export function publicationFailure(client, { status, stderr = "" }) {
+  const thrown = stderr
+    .split("\n")
+    .map((line) => line.trim().match(/^(?:[A-Za-z_$][\w$]*)?Error(?: \[[\w-]+\])?: (?!file:\/\/)(\S.*)$/)?.[1])
+    .filter(Boolean)
+    .at(-1);
+  return `${client} was not updated.\n${thrown || stderr.trim() || `Client publication exited with status ${status}.`}`;
 }
 
 export function targetCli(command) {
@@ -213,6 +227,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
   // that misses a shared picker mutation.
   if (codexIntegrationInstalled() || existsSync(NATIVE_CATALOG_PATH)) {
     await runTargetPublicationProcess("catalog.mjs", [], {
+      client: PICKER_NAMES.codex,
       signal,
       deadline: operationDeadline,
     });
@@ -223,6 +238,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
   // it survives a user who edits or moves the document by hand.
   if (existsSync(DSH_CATALOG_PATH)) {
     await runTargetPublicationProcess("dsh-config-manager.mjs", ["install"], {
+      client: PICKER_NAMES.dsh,
       signal,
       deadline: operationDeadline,
     });
@@ -234,6 +250,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
   // set just lost.
   if (existsSync(GEMINI_CATALOG_PATH)) {
     await runTargetPublicationProcess("gemini-config-manager.mjs", ["install"], {
+      client: PICKER_NAMES.gemini,
       signal,
       deadline: operationDeadline,
     });
@@ -252,6 +269,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
     );
     if (!status.running) {
       await runTargetPublicationProcess("cursor-config-manager.mjs", ["install"], {
+        client: PICKER_NAMES.cursor,
         signal,
         deadline: operationDeadline,
       });
@@ -260,6 +278,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
   }
   if (existsSync(CLAUDE_CATALOG_PATH)) {
     await runTargetPublicationProcess("claude-code-config-manager.mjs", ["install"], {
+      client: PICKER_NAMES.claude,
       signal,
       deadline: operationDeadline,
     });
@@ -267,6 +286,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
   }
   if (existsSync(OPENCLAW_CATALOG_PATH)) {
     await runTargetPublicationProcess("openclaw-config-manager.mjs", ["install"], {
+      client: PICKER_NAMES.openclaw,
       signal,
       deadline: operationDeadline,
     });
@@ -280,6 +300,7 @@ export async function refreshTargetPickerIfInstalled({ signal, deadline } = {}) 
   for (const harness of routedHarnesses()) {
     if (!existsSync(ROUTED_HARNESS_CATALOG_PATHS[harness.id])) continue;
     await runTargetPublicationProcess("routed-harness-manager.mjs", [harness.id, "install"], {
+      client: harness.displayName,
       signal,
       deadline: operationDeadline,
     });

@@ -10,9 +10,11 @@ process.env.CODEX_ROUTER_STATE_DIR = path.join(testRoot, "state");
 
 const {
   installedTargets,
+  publicationFailure,
   refreshTargetPickerIfInstalled,
   runTargetPublicationProcess,
 } = await import("../src/target-integration.mjs");
+const { safeFailure } = await import("../apps/control-center/electron/command-runner.mjs");
 const {
   CONFIG_PATH,
   CLAUDE_CATALOG_PATH,
@@ -253,4 +255,65 @@ test("a routed harness publication keeps the shared plane installed", () => {
   } finally {
     clearStagedFiles();
   }
+});
+
+// What a picker change printed when the harness publisher refused its
+// credentials document: the control process's crash banner wrapping the
+// publisher's own.
+const REFUSAL =
+  'Refusing to edit the harness credentials document: "records" holds a nested mapping, ' +
+  "so this file is not a credential reference document.";
+const NESTED_PUBLISHER_BANNER = [
+  "file:///router/src/target-integration.mjs:93",
+  "    throw new Error(result.stderr.trim());",
+  "          ^",
+  "",
+  "Error: file:///router/src/dsh-config-manager.mjs:230",
+  "      `Refusing to edit the harness credentials document: \"${owner}\" holds a nested mapping, ` +",
+  "      ^",
+  "",
+  `Error: ${REFUSAL}`,
+  "    at nested (file:///router/src/dsh-config-manager.mjs:230:11)",
+  "",
+  "Node.js v22.22.3",
+  "    at runTargetPublicationProcess (file:///router/src/target-integration.mjs:93:11)",
+  "",
+  "Node.js v22.22.3",
+].join("\n");
+
+test("a failed publication names its client and relays only the innermost cause", async () => {
+  await assert.rejects(
+    runTargetPublicationProcess("dsh-config-manager.mjs", ["install"], {
+      client: "DeepSeek Harness",
+      run: async () => ({ status: 1, stdout: "", stderr: NESTED_PUBLISHER_BANNER }),
+    }),
+    { message: `DeepSeek Harness was not updated.\n${REFUSAL}` },
+  );
+});
+
+test("a failed publication without a thrown error still says what failed", () => {
+  assert.equal(
+    publicationFailure("Codex", { status: 1, stderr: "catalog is locked\n" }),
+    "Codex was not updated.\ncatalog is locked",
+  );
+  assert.equal(
+    publicationFailure("Gemini CLI", { status: 3, stderr: "" }),
+    "Gemini CLI was not updated.\nClient publication exited with status 3.",
+  );
+});
+
+test("the Control Center keeps the client name when it hides a credential line", () => {
+  // The UI drops every error line that mentions a credential, which is how the
+  // whole cause used to vanish. The client line must survive that filter, and
+  // a cause without such a word must still follow it.
+  const banner = (message) =>
+    `file:///router/src/target-integration.mjs:93\n          ^\n\nError: ${message}\n    at x (y:1:1)\n`;
+  assert.equal(
+    safeFailure(banner(publicationFailure("DeepSeek Harness", { status: 1, stderr: `Error: ${REFUSAL}` }))),
+    "DeepSeek Harness was not updated.",
+  );
+  assert.equal(
+    safeFailure(banner(publicationFailure("Codex", { status: 1, stderr: "Error: catalog is locked" }))),
+    "Codex was not updated. catalog is locked",
+  );
 });
