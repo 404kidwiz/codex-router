@@ -2401,9 +2401,15 @@ xAI and Codex has its own idle limit. The router's post-prologue stall guard
    never after a terminal event, and as the last pipeline stage so no router
    transform parses it. It never carries text, reasoning, or a tool item: the
    rule against router-authored transcript content stands.
-3. **Only Grok OAuth routes get either.** Other providers keep their stall bound
-   and receive no heartbeat. Widening either needs the same proof: a router test
-   that a silent stream survives, and one that another route is unchanged.
+3. **Only Grok OAuth routes get the extended transport bounds and heartbeat.**
+   Z.ai Coding Plan (`zai-coding`) has its own post-reasoning idle deadline:
+   `CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS`, three minutes, capped at four
+   minutes so shared transport and client idle limits remain longer. Its
+   headers-only prelude and parser bounds are unchanged, and it receives no
+   heartbeat. Other providers keep their stall bound. Widening a route needs
+   a router test that a reasoning pause survives, one that another route is
+   unchanged, and cancellation and deadline coverage without replaying a
+   visible response.
 4. Coverage lives in `test/grok-stream-timeouts.test.mjs`,
    `test/responses-heartbeat.test.mjs`, `test/fetch-transport.test.mjs`, and the
    Grok cases in `test/empty-completion-router.test.mjs`.
