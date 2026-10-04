@@ -1231,8 +1231,7 @@ test("dashboard retry totals match the billed token breakdown", { timeout: 120_0
     const model = page.locator(".db-breakdown-row").filter({ hasText: "deepseek-chat" });
     assert.equal(await model.locator(".db-breakdown-value").innerText(), "310");
     assert.match(await page.locator(".db-traffic-note").innerText(), /310/);
-    await page.waitForFunction(() => window.routerControlTest.navigationReady());
-    await page.evaluate(() => window.routerControlTest.navigate({ destination: "status" }));
+    await page.getByRole("button", { name: "Status", exact: true }).click();
     await page.locator(".st-event-metering strong").waitFor();
     assert.match(await page.locator(".st-event-metering strong").innerText(), /310 tok/);
   } finally {
