@@ -390,12 +390,14 @@ struct ModelRouterTrayApp: App {
     // role, but macOS 26 opens a lone Settings scene at launch, so every login
     // put a blank "Codex Router Settings" window on screen. A MenuBarExtra that
     // is never inserted satisfies App without owning a window. Settings...
-    // (Command-comma) opens the Control Center, where settings live.
+    // (Command-comma) opens the Control Center on its Settings page.
     MenuBarExtra("Codex Router", isInserted: .constant(false)) { EmptyView() }
       .commands {
         CommandGroup(replacing: .appSettings) {
-          Button(routerLocalized("Settings") + "…") { ControlCenterLauncher.open() }
-            .keyboardShortcut(",")
+          Button(routerLocalized("Settings") + "…") {
+            ControlCenterLauncher.open(navigation: ControlCenterNavigationRequest(destination: .settings))
+          }
+          .keyboardShortcut(",")
         }
       }
   }
@@ -795,6 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum ControlCenterDestination: String, Equatable {
   case usage
   case usageResets = "usage-resets"
+  case settings
 
 }
 
@@ -805,6 +808,14 @@ struct ControlCenterNavigationRequest: Equatable {
 
   let destination: ControlCenterDestination
   let sourceID: String?
+
+  // The tray's own Settings item asks for its page directly. Widget and other
+  // external URLs still arrive through `init?(url:)`, which accepts only the
+  // usage destinations, so no link can open the Settings page.
+  init(destination: ControlCenterDestination) {
+    self.destination = destination
+    sourceID = nil
+  }
 
   init?(url: URL) {
     guard url.scheme == Self.scheme,

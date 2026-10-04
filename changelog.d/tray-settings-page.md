@@ -1,0 +1,1 @@
+- **Settings… (⌘,) in the macOS tray lands on the Control Center's Settings page.** The page is a new fixed navigation destination that only the tray's own menu can request: the tray's parser for widget and other external `codex-router://` links still accepts only the usage pages, and the Control Center registers no URL scheme of its own, so no link can open it.
