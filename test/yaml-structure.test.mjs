@@ -196,3 +196,29 @@ test("yamlScalar quotes values that YAML would otherwise reinterpret", () => {
   assert.equal(yamlScalar("1.0"), '"1.0"');
   assert.equal(yamlScalar('has "quotes"'), '"has \\"quotes\\""');
 });
+
+test("an opaque root block keeps its range and registers nothing inside it", () => {
+  // DeepSeek Harness keys each record `<scope>/<id>`, which this lexer does not
+  // read as a key, so the records' fields used to register as the section's
+  // own and the second `kind` was refused as a duplicate.
+  const contents = [
+    "records:",
+    "  client-connection/browser-session:",
+    "    kind: browser-session",
+    "# a note inside the block does not end it",
+    "  client-connection/second-session:",
+    "    kind: browser-session",
+    "refs:",
+    "  KEY: value",
+    "",
+  ].join("\n");
+  assert.throws(() => scanYamlDocument(contents), /"kind" is defined twice/);
+  const document = scanYamlDocument(contents, { opaqueRootKeys: ["records"] });
+  const records = yamlNode(document, ["records"]);
+  assert.equal(records.children.size, 0);
+  assert.deepEqual([records.index, records.endIndex], [0, 5]);
+  assert.equal(yamlNode(document, ["refs", "KEY"]).index, 7);
+  // Only a root key is opaque; the same name deeper in is read as usual.
+  const nested = scanYamlDocument("outer:\n  records:\n    inner: 1\n", { opaqueRootKeys: ["records"] });
+  assert.equal(yamlNode(nested, ["outer", "records", "inner"]).index, 2);
+});

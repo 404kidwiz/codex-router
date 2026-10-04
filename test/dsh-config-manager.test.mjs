@@ -429,6 +429,28 @@ test("the harness's records section is kept byte for byte beside the envelope", 
   assert.equal(removeCredential(after, "CODEX_ROUTER_CALLER_KEY"), before);
 });
 
+test("several harness records with the same fields stay one opaque section", () => {
+  // A second stored record repeats `kind` and `payload`. Read as the section's
+  // own fields they collided, and every publication was refused again.
+  const records =
+    "records:\n" +
+    "  client-connection/browser-session:\n" +
+    "    kind: browser-session\n" +
+    "    payload:\n" +
+    "      secret: first\n" +
+    "  client-connection/second-session:\n" +
+    "    kind: browser-session\n" +
+    "    payload:\n" +
+    "      secret: second\n";
+  const before = `${records}refs:\n  OTHER_KEY: existing\nversion: 1\n`;
+  const after = applyCredential(before, "CODEX_ROUTER_CALLER_KEY", "secret-value");
+  assert.equal(
+    after,
+    `${records}refs:\n  OTHER_KEY: existing\n  CODEX_ROUTER_CALLER_KEY: "secret-value"\nversion: 1\n`,
+  );
+  assert.equal(removeCredential(after, "CODEX_ROUTER_CALLER_KEY"), before);
+});
+
 test("only the envelope's own records section is exempt from the nesting rule", () => {
   // Without `version` or `refs` this is a root-level reference map, where a
   // nested `records` is as foreign as any other nested key.

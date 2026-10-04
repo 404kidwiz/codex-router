@@ -244,9 +244,19 @@ function assertCredentialDocument(document, refs, wrapped) {
       }
       continue;
     }
-    if (wrapped && node.key === CREDENTIAL_RECORDS_KEY) continue;
+    if (node.key === CREDENTIAL_RECORDS_KEY) {
+      // Scanned as an opaque block, so it reports no children of its own.
+      if (!wrapped && !node.inline && node.endIndex > node.index) nested(node.key);
+      continue;
+    }
     if (node.children.size) nested(node.key);
   }
+}
+
+// The harness's own `records` section is read as one opaque block: the router
+// owns nothing in it, and its `<scope>/<id>` keys are not ones the lexer reads.
+function scanCredentials(contents) {
+  return scanYamlDocument(contents, { opaqueRootKeys: [CREDENTIAL_RECORDS_KEY] });
 }
 
 function withoutNode(document, node) {
@@ -264,7 +274,7 @@ function withoutNode(document, node) {
  * mapping inside `refs`, an inline `refs` — is refused with the file untouched.
  */
 export function applyCredential(contents, reference, value) {
-  const initial = scanYamlDocument(contents);
+  const initial = scanCredentials(contents);
   const { wrapped } = credentialEnvelope(initial);
   assertCredentialDocument(initial, initial.root.children.get(CREDENTIAL_REFS_KEY), wrapped);
 
@@ -275,7 +285,7 @@ export function applyCredential(contents, reference, value) {
   // that era would find again. Take it out; nothing else is touched.
   const misplaced = wrapped ? yamlNode(initial, [reference]) : undefined;
   const document = misplaced
-    ? scanYamlDocument(withoutNode(initial, misplaced).join("\n"))
+    ? scanCredentials(withoutNode(initial, misplaced).join("\n"))
     : initial;
 
   const refs = wrapped ? document.root.children.get(CREDENTIAL_REFS_KEY) : undefined;
@@ -310,7 +320,7 @@ export function applyCredential(contents, reference, value) {
 export function removeCredential(contents, reference) {
   let text = String(contents ?? "");
   for (;;) {
-    const document = scanYamlDocument(text);
+    const document = scanCredentials(text);
     const node =
       yamlNode(document, [CREDENTIAL_REFS_KEY, reference]) || yamlNode(document, [reference]);
     if (!node) return joinLines(normalizeTrailing(document.lines));
@@ -570,7 +580,7 @@ export function status() {
     // an enveloped document is present on disk and absent to the harness, and
     // reporting that as installed turns a missing credential into a 401 with
     // no diagnostic anywhere.
-    const document = scanYamlDocument(credentials);
+    const document = scanCredentials(credentials);
     credentialPresent = Boolean(yamlNode(document, credentialPath(document, DSH_CREDENTIAL_REF)));
   } catch {
     credentialPresent = false;

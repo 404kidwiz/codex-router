@@ -123,6 +123,19 @@ test("DSH capability refresh preserves route models and default policy byte-for-
   assert.match(refreshed.settings, /vendor\/model/);
 });
 
+test("DSH capability refresh leaves the harness's own records untouched", () => {
+  // Rotation reads the same credentials document, so two stored records must
+  // not trip it either.
+  const route = buildDshRoute({ baseUrl: oldBase, models: [] });
+  const settings = applyRouteToSettings("", route);
+  const records =
+    "records:\n  client-connection/a:\n    kind: browser-session\n  client-connection/b:\n    kind: browser-session\n";
+  const credentials = applyCredential(`${records}version: 1\n`, "CODEX_ROUTER_CALLER_KEY", oldSecret);
+  const refreshed = refreshDshCallerCapabilityDocuments({ settings, credentials, baseUrl: newBase, secret: newSecret, port: 4202 });
+  assert.equal(refreshed.credentials, credentials.replace(oldSecret, newSecret));
+  assert.ok(refreshed.credentials.startsWith(records));
+});
+
 test("Gemini capability refresh preserves whether a default model was published", () => {
   const oldGemini = geminiBaseUrl(4202, oldSecret);
   const newGemini = geminiBaseUrl(4202, newSecret);

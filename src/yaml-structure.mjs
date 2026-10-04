@@ -154,7 +154,7 @@ function blockScalarIndicator(value) {
  * key is that key's annotation, and taking it with the node above would delete
  * somebody's note about a route the router does not own.
  */
-export function scanYamlDocument(contents) {
+export function scanYamlDocument(contents, { opaqueRootKeys = [] } = {}) {
   const lines = String(contents ?? "").split("\n");
   const root = { path: [], indent: -1, index: -1, endIndex: lines.length - 1, children: new Map() };
   const stack = [root];
@@ -169,6 +169,13 @@ export function scanYamlDocument(contents) {
   // A double-quoted scalar the harness folded across lines. Its continuation
   // lines are not mapping entries however much they look like one.
   let openQuote;
+  // A root key the caller names as opaque keeps its whole block as its range
+  // and registers nothing inside it. The caller owns no key in there, and the
+  // block may use keys this lexer does not read: DeepSeek Harness keys its
+  // records `<scope>/<id>`, so their fields read as the section's own and a
+  // second record's `kind` became a duplicate key.
+  const opaque = new Set(opaqueRootKeys);
+  let opaqueIndent;
 
   const consume = (text, lineNumber, startsNode = true) => {
     const scanned = scanValue(text, { depth: flowDepth, openQuote, startsNode });
@@ -201,6 +208,16 @@ export function scanYamlDocument(contents) {
         continue;
       }
       blockScalar = undefined;
+    }
+    if (opaqueIndent !== undefined) {
+      // YAML indents everything inside a block past its key, so the block ends
+      // at the first content line back at that column. A comment may sit at
+      // any column and never ends it.
+      if (!trimmed || trimmed.startsWith("#") || indent > opaqueIndent) {
+        if (trimmed && !trimmed.startsWith("#")) lastContentIndex = index;
+        continue;
+      }
+      opaqueIndent = undefined;
     }
     if (sequenceIndent !== undefined) {
       // A block sequence may be indented level with its own key, so the column
@@ -286,6 +303,7 @@ export function scanYamlDocument(contents) {
       continue;
     }
     consume(entry.value, lineNumber);
+    if (parent === root && opaque.has(entry.key) && !node.inline) opaqueIndent = entry.indent;
   }
 
   if (flowDepth > 0) ambiguousYaml(lines.length, "a flow collection is unterminated");
