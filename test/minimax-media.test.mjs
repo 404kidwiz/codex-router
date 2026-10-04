@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -45,6 +45,86 @@ function streamOf(text) {
     },
   });
 }
+
+for (const [filename, expectedNames] of [
+  ["picture.jpeg", ["picture-1.jpeg", "picture-2.jpeg"]],
+  ["picture.jpg", ["picture-1.jpg", "picture-2.jpg"]],
+  ["picture.png", ["picture-1.png", "picture-2.png"]],
+  ["picture.JPEG", ["picture-1.JPEG", "picture-2.JPEG"]],
+  ["picture", ["picture-1", "picture-2"]],
+  [".picture", [".picture-1", ".picture-2"]],
+]) {
+  test(`multiple images preserve separate files for --out ${filename}`, async (t) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "mm-images-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const urls = ["https://cdn.example/first.jpeg", "https://cdn.example/second.jpeg"];
+    const { hooks, requests, emitted } = harness([
+      { body: { data: { image_urls: urls } } },
+      { stream: streamOf("first-image-bytes") },
+      { stream: streamOf("second-image-bytes") },
+    ]);
+
+    const result = await runMedia([
+      "image", "--prompt", "a paper boat", "--count", "2",
+      "--out", path.join(directory, filename),
+    ], hooks);
+
+    const expected = expectedNames.map((name) => path.join(directory, name));
+    assert.deepEqual(result.files, expected);
+    assert.equal(new Set(result.files).size, 2);
+    assert.deepEqual(result.files.map((file) => readFileSync(file, "utf8")), [
+      "first-image-bytes", "second-image-bytes",
+    ]);
+    assert.deepEqual(result.urls, urls);
+    assert.deepEqual(emitted, expected.map((file) => `Saved: ${file}`));
+    assert.equal(JSON.parse(requests[0].init.body).n, 2);
+  });
+}
+
+test("one image retains the exact requested output filename", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "mm-image-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const out = path.join(directory, "nested", "picture.png");
+  const { hooks } = harness([
+    { body: { data: { image_urls: ["https://cdn.example/image.jpeg"] } } },
+    { stream: streamOf("single-image-bytes") },
+  ]);
+  const result = await runMedia(["image", "--prompt", "a boat", "--out", out], hooks);
+  assert.deepEqual(result.files, [out]);
+  assert.equal(readFileSync(out, "utf8"), "single-image-bytes");
+});
+
+test("multiple images share one timestamp in the default output filenames", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "mm-image-defaults-"));
+  const previousCwd = process.cwd();
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const files = [1, 2].map((index) => `minimax-image-2026-01-02T03-04-05-${index}.jpeg`);
+  const { hooks } = harness([
+    { body: { data: { image_urls: ["https://cdn.example/one", "https://cdn.example/two"] } } },
+    { stream: streamOf("first") },
+    { stream: streamOf("second") },
+  ]);
+  let clockCalls = 0;
+  hooks.now = () => Date.UTC(2026, 0, 2, 3, 4, 5 + clockCalls++);
+  process.chdir(directory);
+  try {
+    const result = await runMedia(["image", "--prompt", "a boat", "--count", "2"], hooks);
+    assert.deepEqual(result.files, files);
+    assert.deepEqual(result.files.map((file) => readFileSync(file, "utf8")), ["first", "second"]);
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
+test("image --no-download returns the URLs without fetching or saving images", async () => {
+  const urls = ["https://cdn.example/one", "https://cdn.example/two"];
+  const { hooks, requests } = harness([{ body: { data: { image_urls: urls } } }]);
+  const result = await runMedia([
+    "image", "--prompt", "a boat", "--count", "2", "--out", "picture.jpg", "--no-download",
+  ], hooks);
+  assert.deepEqual(result, { action: "image", urls, files: [] });
+  assert.equal(requests.length, 1);
+});
 
 test("parseArgs separates flags, values, and booleans", () => {
   const { action, options } = parseArgs([
