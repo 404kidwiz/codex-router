@@ -257,63 +257,53 @@ test("a routed harness publication keeps the shared plane installed", () => {
   }
 });
 
-// What a picker change printed when the harness publisher refused its
-// credentials document: the control process's crash banner wrapping the
-// publisher's own.
+// What the harness publisher printed when it refused its credentials document.
+// Every publisher catches its own error and prints only the message.
 const REFUSAL =
   'Refusing to edit the harness credentials document: "records" holds a nested mapping, ' +
   "so this file is not a credential reference document.";
-const NESTED_PUBLISHER_BANNER = [
-  "file:///router/src/target-integration.mjs:93",
-  "    throw new Error(result.stderr.trim());",
-  "          ^",
-  "",
-  "Error: file:///router/src/dsh-config-manager.mjs:230",
-  "      `Refusing to edit the harness credentials document: \"${owner}\" holds a nested mapping, ` +",
-  "      ^",
-  "",
-  `Error: ${REFUSAL}`,
-  "    at nested (file:///router/src/dsh-config-manager.mjs:230:11)",
-  "",
-  "Node.js v22.22.3",
-  "    at runTargetPublicationProcess (file:///router/src/target-integration.mjs:93:11)",
-  "",
-  "Node.js v22.22.3",
-].join("\n");
+const STOPPED = "DeepSeek Harness was not updated, and any client after it was skipped.";
 
-test("a failed publication names its client and relays only the innermost cause", async () => {
+test("a failed publication names its client and the stop, then the publisher's report", async () => {
   await assert.rejects(
     runTargetPublicationProcess("dsh-config-manager.mjs", ["install"], {
       client: "DeepSeek Harness",
-      run: async () => ({ status: 1, stdout: "", stderr: NESTED_PUBLISHER_BANNER }),
+      run: async () => ({ status: 1, signal: null, stdout: "", stderr: `${REFUSAL}\n` }),
     }),
-    { message: `DeepSeek Harness was not updated.\n${REFUSAL}` },
+    { message: `${STOPPED}\n${REFUSAL}` },
   );
 });
 
-test("a failed publication without a thrown error still says what failed", () => {
+test("a publisher's report is relayed whole, and a silent failure says how it ended", () => {
+  // A wrapper's context and every line under it stay, not just one of them.
+  const wrapped = "OpenClaw config command failed:\nError: first line\nsecond line";
   assert.equal(
-    publicationFailure("Codex", { status: 1, stderr: "catalog is locked\n" }),
-    "Codex was not updated.\ncatalog is locked",
+    publicationFailure("OpenClaw", { status: 1, stderr: `${wrapped}\n` }),
+    `OpenClaw was not updated, and any client after it was skipped.\n${wrapped}`,
   );
   assert.equal(
     publicationFailure("Gemini CLI", { status: 3, stderr: "" }),
-    "Gemini CLI was not updated.\nClient publication exited with status 3.",
+    "Gemini CLI was not updated, and any client after it was skipped.\nClient publication exited with status 3.",
+  );
+  assert.equal(
+    publicationFailure("Codex", { status: null, signal: "SIGTERM", stderr: "" }),
+    "Codex was not updated, and any client after it was skipped.\nThe publisher was stopped by SIGTERM.",
   );
 });
 
 test("the Control Center keeps the client name when it hides a credential line", () => {
   // The UI drops every error line that mentions a credential, which is how the
   // whole cause used to vanish. The client line must survive that filter, and
-  // a cause without such a word must still follow it.
+  // a cause without such a word must still follow it. The control process dies
+  // on the rethrown error, so the UI parses its crash banner.
   const banner = (message) =>
     `file:///router/src/target-integration.mjs:93\n          ^\n\nError: ${message}\n    at x (y:1:1)\n`;
   assert.equal(
-    safeFailure(banner(publicationFailure("DeepSeek Harness", { status: 1, stderr: `Error: ${REFUSAL}` }))),
-    "DeepSeek Harness was not updated.",
+    safeFailure(banner(publicationFailure("DeepSeek Harness", { status: 1, stderr: REFUSAL }))),
+    STOPPED,
   );
   assert.equal(
-    safeFailure(banner(publicationFailure("Codex", { status: 1, stderr: "Error: catalog is locked" }))),
-    "Codex was not updated. catalog is locked",
+    safeFailure(banner(publicationFailure("Codex", { status: 1, stderr: "catalog is locked" }))),
+    "Codex was not updated, and any client after it was skipped. catalog is locked",
   );
 });

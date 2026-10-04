@@ -94,19 +94,16 @@ export async function runTargetPublicationProcess(
   if (result.status !== 0) throw new Error(publicationFailure(client, result));
 }
 
-// A publisher that fails dies on an uncaught error, so its stderr is a Node
-// crash banner, and a publication run from inside another process nests one
-// banner in the next. Relaying all of it buried the cause and never said which
-// client was left behind. The first line names the client and nothing else,
-// because the Control Center drops any error line that mentions a credential;
-// the innermost thrown message follows on its own line.
-export function publicationFailure(client, { status, stderr = "" }) {
-  const thrown = stderr
-    .split("\n")
-    .map((line) => line.trim().match(/^(?:[A-Za-z_$][\w$]*)?Error(?: \[[\w-]+\])?: (?!file:\/\/)(\S.*)$/)?.[1])
-    .filter(Boolean)
-    .at(-1);
-  return `${client} was not updated.\n${thrown || stderr.trim() || `Client publication exited with status ${status}.`}`;
+// The error used to be the publisher's stderr alone. Nothing in it named the
+// client, publication stops at the first failure so any later client goes
+// quietly stale, and the Control Center drops every error line that mentions
+// a credential, which can be the whole cause. The first line therefore names
+// the client and the stop and carries nothing that filter removes; the
+// publisher's own report follows it unchanged.
+export function publicationFailure(client, { status, signal, stderr = "" }) {
+  const detail = stderr.trim()
+    || (signal ? `The publisher was stopped by ${signal}.` : `Client publication exited with status ${status}.`);
+  return `${client} was not updated, and any client after it was skipped.\n${detail}`;
 }
 
 export function targetCli(command) {
