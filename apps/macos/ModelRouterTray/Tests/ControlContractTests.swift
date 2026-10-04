@@ -190,7 +190,7 @@ struct ControlContractTests {
     }
   }
 
-  @Test("the Settings item opens the Settings page, which no link can reach")
+  @Test("the Settings item opens the Settings page; the link parser still refuses it")
   func settingsItemNavigatesOnlyFromTheTray() {
     let settings = ControlCenterNavigationRequest(destination: .settings)
     #expect(settings.arguments == ["--router-destination", "settings"])

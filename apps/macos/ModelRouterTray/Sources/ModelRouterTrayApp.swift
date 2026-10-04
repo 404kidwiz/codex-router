@@ -811,7 +811,8 @@ struct ControlCenterNavigationRequest: Equatable {
 
   // The tray's own Settings item asks for its page directly. Widget and other
   // external URLs still arrive through `init?(url:)`, which accepts only the
-  // usage destinations, so no link can open the Settings page.
+  // usage destinations, so a registered `codex-router://` link cannot open the
+  // Settings page.
   init(destination: ControlCenterDestination) {
     self.destination = destination
     sourceID = nil

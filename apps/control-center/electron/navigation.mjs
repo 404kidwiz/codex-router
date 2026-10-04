@@ -1,8 +1,9 @@
 export const NAVIGATION_ARGUMENT = "--router-destination";
 export const NAVIGATION_SOURCE_ARGUMENT = "--router-source";
-// `settings` is requested only by the tray's Settings item. This app registers
-// no URL scheme, so the tray is what hands it a URL, and the tray's own parser
-// for widget and other external links still accepts only the usage pages.
+// `settings` is what the Settings items ask for. The `codex-router` scheme is
+// registered to the tray, whose parser for widget and other external links
+// still accepts only the usage pages; this app registers no scheme, so a URL
+// reaches it only when a local process addresses it directly.
 export const NAVIGATION_DESTINATIONS = Object.freeze(["usage", "usage-resets", "settings"]);
 const SOURCE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
