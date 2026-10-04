@@ -408,6 +408,41 @@ test("a nested document under refs is refused rather than edited", () => {
   );
 });
 
+test("the harness's records section is kept byte for byte beside the envelope", () => {
+  // Version 1 of the harness's store has three sections. `records` holds tagged
+  // records such as a stored browser session and is nested by design; refusing
+  // it blocked every client publication once the harness had stored one.
+  const records =
+    "records:\n" +
+    "  client-connection/browser-session:\n" +
+    "    kind: browser-session\n" +
+    "    payload:\n" +
+    "      secret: session-secret\n" +
+    "      version: 2\n";
+  const before = `${records}refs:\n  OTHER_KEY: existing\nversion: 1\n`;
+  const after = applyCredential(before, "CODEX_ROUTER_CALLER_KEY", "secret-value");
+  assert.equal(
+    after,
+    `${records}refs:\n  OTHER_KEY: existing\n  CODEX_ROUTER_CALLER_KEY: "secret-value"\nversion: 1\n`,
+  );
+  assert.equal(applyCredential(after, "CODEX_ROUTER_CALLER_KEY", "secret-value"), after);
+  assert.equal(removeCredential(after, "CODEX_ROUTER_CALLER_KEY"), before);
+});
+
+test("only the envelope's own records section is exempt from the nesting rule", () => {
+  // Without `version` or `refs` this is a root-level reference map, where a
+  // nested `records` is as foreign as any other nested key.
+  assert.throws(
+    () => applyCredential("records:\n  scope/id:\n    kind: x\n", "CODEX_ROUTER_CALLER_KEY", "x"),
+    /"records" holds a nested mapping/,
+  );
+  assert.throws(
+    () =>
+      applyCredential("version: 1\nserver:\n  host: example.com\n", "CODEX_ROUTER_CALLER_KEY", "x"),
+    /"server" holds a nested mapping/,
+  );
+});
+
 test("an inline refs mapping is refused rather than extended", () => {
   assert.throws(
     () => applyCredential("version: 1\nrefs: {}\n", "CODEX_ROUTER_CALLER_KEY", "x"),
