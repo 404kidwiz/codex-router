@@ -56,6 +56,32 @@ function render(script, platform, testRoot, target = "codex", sourceRoot = root)
   return serviceCommand(script, platform, testRoot, "render", target, sourceRoot);
 }
 
+test("all service platforms persist a bounded Z.ai idle override", () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "zai-idle-service-"));
+  try {
+    for (const [platform, script] of [["darwin", "service-macos.mjs"], ["linux", "service-linux.mjs"], ["win32", "service-windows.mjs"]]) {
+      const absent = serviceCommand(script, platform, testRoot, "render", "codex", root, {
+        CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS: undefined,
+      });
+      assert.doesNotMatch(absent, /CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS/, platform);
+      for (const [setting, expected] of [["90000", "90000"], ["invalid;value", "180000"]]) {
+        const output = serviceCommand(script, platform, testRoot, "render", "codex", root, {
+          CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS: setting,
+        });
+        const expectedLine = platform === "darwin"
+          ? `<key>CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS</key>\n    <string>${expected}</string>`
+          : platform === "linux"
+            ? `Environment="CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS=${expected}"`
+            : `set "CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS=${expected}"`;
+        assert.ok(output.includes(expectedLine), `${platform}: ${expectedLine}`);
+        assert.doesNotMatch(output, /invalid;value/, platform);
+      }
+    }
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
 test("service regeneration retains persisted hook opt-in on all platforms", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "router-hook-service-"));
   const stateDir = path.join(testRoot, "codex router state");
