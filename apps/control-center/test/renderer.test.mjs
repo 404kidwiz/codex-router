@@ -791,6 +791,12 @@ test("the production renderer exposes model discovery and picker actions", { tim
     );
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Usage overview");
     assert.equal(await page.getByLabel("Usage source").inputValue(), "chatgpt-subscription");
+    // The tray's Settings item (Command-comma) lands on the Settings page.
+    assert.equal(
+      await page.evaluate(() => window.routerControlTest.navigate({ destination: "settings" })),
+      true,
+    );
+    await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
 
     // Harness is one client per row, in the product order the operator uses,
     // and the shared metadata index continues into Context Manager.
