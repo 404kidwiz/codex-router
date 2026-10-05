@@ -279,6 +279,7 @@ import {
   loopbackProbeFetch,
 } from "./fetch-transport.mjs";
 import { grokStreamStallMs, grokTransportIdleTimeoutMs } from "./grok-stream-timeouts.mjs";
+import { zaiCodingStreamStallMs } from "./zai-stream-timeouts.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
 
 installStableFetchTransport();
@@ -376,6 +377,7 @@ const EMPTY_COMPLETION_PRELUDE_MS =
 // Every transport hop on the Grok path is sized from the same value.
 const GROK_STREAM_STALL_MS = grokStreamStallMs();
 const GROK_TRANSPORT_IDLE_TIMEOUT_MS = grokTransportIdleTimeoutMs();
+const ZAI_CODING_STREAM_STALL_MS = zaiCodingStreamStallMs();
 // Codex abandons a stream after five minutes without a data event and sends
 // the turn again. A silent Grok stream relays a lifecycle heartbeat well inside
 // that window; see src/responses-heartbeat.mjs.
@@ -5206,7 +5208,9 @@ async function handleResponses(request, response, requestUrl) {
               maxPreludeMs: preludeMs,
               maxStreamStallMs: canonicalProviderId(route.provider) === "grok-oauth"
                 ? GROK_STREAM_STALL_MS
-                : preludeMs,
+                : canonicalProviderId(route.provider) === "zai-coding"
+                  ? ZAI_CODING_STREAM_STALL_MS
+                  : preludeMs,
             })
           : undefined;
       if (guard) {
