@@ -232,17 +232,24 @@ export async function streamOllamaPull(
   const decoder = new TextDecoder();
   let buffer = "";
   let sawSuccess = false;
-  for await (const chunk of response.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    const { events, remainder } = parseNdjsonLines(buffer);
-    buffer = remainder;
+  const reportEvents = (events) => {
     for (const event of events) {
       if (event.error) throw new Error(String(event.error));
       if (event.status === "success") sawSuccess = true;
       const percent = tracker.update(event);
       onProgress?.({ detail: String(event.status || "downloading"), percent });
     }
+  };
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const { events, remainder } = parseNdjsonLines(buffer);
+    buffer = remainder;
+    reportEvents(events);
   }
+  // EOF also closes the last record. The daemon (or a proxy) need not send a
+  // final line feed, and leaving the carry unread loses both success and error
+  // records. Flush the decoder before parsing, preserving split UTF-8 text.
+  reportEvents(parseNdjsonLines(`${buffer}${decoder.decode()}\n`).events);
   if (!sawSuccess) throw new Error("The download ended before Ollama confirmed success.");
 }
 
