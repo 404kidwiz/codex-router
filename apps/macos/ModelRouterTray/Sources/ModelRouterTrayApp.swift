@@ -386,8 +386,18 @@ struct ModelRouterTrayApp: App {
     // MenuBarExtra(.window) re-anchors from a SwiftUI-driven status item on
     // every RouterStore publish, which parks the panel on opposite screen
     // corners. The AppDelegate owns one fixed NSStatusItem and NSPanel instead.
-    // This empty Settings scene is only here to satisfy App.
-    Settings { EmptyView() }
+    // App still needs one scene. An empty Settings scene used to fill that
+    // role, but macOS 26 opens a lone Settings scene at launch, so every login
+    // put a blank "Codex Router Settings" window on screen. A MenuBarExtra that
+    // is never inserted satisfies App without owning a window. Settings...
+    // (Command-comma) opens the Control Center, where settings live.
+    MenuBarExtra("Codex Router", isInserted: .constant(false)) { EmptyView() }
+      .commands {
+        CommandGroup(replacing: .appSettings) {
+          Button(routerLocalized("Settings") + "…") { ControlCenterLauncher.open() }
+            .keyboardShortcut(",")
+        }
+      }
   }
 }
 
