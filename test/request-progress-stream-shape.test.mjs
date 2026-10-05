@@ -64,3 +64,20 @@ test("retry clears terminal failure flag like terminal event", () => {
   assert.equal(snap.terminalFailureSeen, undefined);
   assert.equal(snap.upstreamAttempts, 2);
 });
+
+test("unknown upstream event names cannot carry content into diagnostics", () => {
+  const tracker = createRequestProgress();
+  const request = tracker.begin();
+  for (const type of ["private-token-example", "response.private_token_example.delta", "https://secret.example/"]) {
+    request.event({ type });
+  }
+  let snap = tracker.snapshot().active[0];
+  assert.equal(snap.firstEventType, undefined);
+  assert.equal(snap.lastEventType, undefined);
+  assert.doesNotMatch(JSON.stringify(snap), /private|secret/);
+  request.event({ type: "response.created" });
+  request.event({ type: "another-private-token" });
+  snap = tracker.snapshot().active[0];
+  assert.equal(snap.firstEventType, "response.created");
+  assert.equal(snap.lastEventType, "response.created");
+});

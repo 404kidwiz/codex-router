@@ -12,3 +12,8 @@ export function startupTimeoutMs(name, fallbackMs, env = process.env) {
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return fallbackMs;
   return parsed;
 }
+
+export function runtimeChildEnvironment(env) {
+  const { CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: _startupAclTimeout, ...runtime } = env;
+  return runtime;
+}

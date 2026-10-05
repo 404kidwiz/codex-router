@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { startupTimeoutMs } from "../src/startup-timeout.mjs";
+import { runtimeChildEnvironment, startupTimeoutMs } from "../src/startup-timeout.mjs";
+
+test("runtime children never inherit the supervisor's startup ACL allowance", () => {
+  const env = { CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: "900000", PATH: "test-path" };
+  assert.deepEqual(runtimeChildEnvironment(env), { PATH: "test-path" });
+  assert.equal(env.CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS, "900000");
+});
 
 test("an unset variable keeps the shipped default", () => {
   assert.equal(startupTimeoutMs("CODEX_ROUTER_TEST_TIMEOUT_MISSING", 5_000, {}), 5_000);
