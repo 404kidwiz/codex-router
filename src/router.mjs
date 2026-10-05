@@ -280,6 +280,7 @@ import {
 } from "./fetch-transport.mjs";
 import { grokStreamStallMs, grokTransportIdleTimeoutMs } from "./grok-stream-timeouts.mjs";
 import { zaiCodingStreamStallMs } from "./zai-stream-timeouts.mjs";
+import { localTransportIdleTimeoutMs } from "./local-timeouts.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
 
 installStableFetchTransport();
@@ -378,6 +379,7 @@ const EMPTY_COMPLETION_PRELUDE_MS =
 const GROK_STREAM_STALL_MS = grokStreamStallMs();
 const GROK_TRANSPORT_IDLE_TIMEOUT_MS = grokTransportIdleTimeoutMs();
 const ZAI_CODING_STREAM_STALL_MS = zaiCodingStreamStallMs();
+const LOCAL_TRANSPORT_IDLE_TIMEOUT_MS = localTransportIdleTimeoutMs();
 // Codex abandons a stream after five minutes without a data event and sends
 // the turn again. A silent Grok stream relays a lifecycle heartbeat well inside
 // that window; see src/responses-heartbeat.mjs.
@@ -395,12 +397,16 @@ function isGrokOauthRoute(route) {
   return Boolean(route) && canonicalProviderId(route.provider) === "grok-oauth";
 }
 
-// A Grok hop uses a pool whose body idle bound outlasts the stall guard. Every
-// other route keeps the shared pool and Undici's default bound.
+// Grok keeps its stall-guard-sized pool. Local Ollama uses a separate pool
+// whose headers and body idle bounds outlast its LiteLLM timeout.
 function fetchForRoute(route, url, init) {
-  return isGrokOauthRoute(route)
-    ? longIdleStreamFetch(url, init, { bodyTimeoutMs: GROK_TRANSPORT_IDLE_TIMEOUT_MS })
-    : fetch(url, init);
+  if (isGrokOauthRoute(route)) {
+    return longIdleStreamFetch(url, init, { bodyTimeoutMs: GROK_TRANSPORT_IDLE_TIMEOUT_MS });
+  }
+  if (route && canonicalProviderId(route.provider) === "local") {
+    return longIdleStreamFetch(url, init, { bodyTimeoutMs: LOCAL_TRANSPORT_IDLE_TIMEOUT_MS });
+  }
+  return fetch(url, init);
 }
 
 // Codex sends the service tier the operator picked, and a priority tier bills

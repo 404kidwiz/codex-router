@@ -2395,8 +2395,8 @@ xAI and Codex has its own idle limit. The router's post-prologue stall guard
    the forwarder's xAI pool from that one value. Compaction is a hop too: it is
    not streamed, so its headers arrive only after the whole generation, and it
    uses the same pool and deployment bound as a turn. A new hop on the Grok path
-   takes its bound from there. The shared Undici pool keeps its default for
-   every other provider.
+   takes its bound from there. Local Ollama uses its own pool sized from
+   MODEL_ROUTER_LOCAL_TIMEOUT; other providers keep the shared Undici default.
 2. **Codex's idle timer is fed a lifecycle event, never a comment.** Codex
    abandons a stream after five minutes without a parsed data event and sends
    the whole turn again, which bills the provider twice; an SSE comment or a
@@ -2406,7 +2406,8 @@ xAI and Codex has its own idle limit. The router's post-prologue stall guard
    never after a terminal event, and as the last pipeline stage so no router
    transform parses it. It never carries text, reasoning, or a tool item: the
    rule against router-authored transcript content stands.
-3. **Only Grok OAuth routes get the extended transport bounds and heartbeat.**
+3. **Only Grok OAuth gets the heartbeat.** Local Ollama gets long-idle
+   transport sized from its configured timeout without a heartbeat.
    Z.ai Coding Plan (`zai-coding`) has its own post-reasoning idle deadline:
    `CODEX_ROUTER_ZAI_CODING_STREAM_STALL_MS`, three minutes, capped at four
    minutes so shared transport and client idle limits remain longer. Its
