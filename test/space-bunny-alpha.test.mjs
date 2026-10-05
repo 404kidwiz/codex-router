@@ -66,7 +66,10 @@ test("Command Code publishes Space Bunny Alpha under its advertised model ID", (
   assert.equal(model.listed, true);
   assert.equal(model.contextWindow, 1_000_000);
   assert.equal(model.autoCompact, 700_000);
-  assert.deepEqual(model.inputModalities, ["text"]);
+  // Verified against the live endpoint on 2026-09-27: a 64x64 solid-colour PNG
+  // was accepted and correctly described. Declaring this text-only excluded the
+  // model from the vision engine list for no reason.
+  assert.deepEqual(model.inputModalities, ["text", "image"]);
   assert.deepEqual(
     model.reasoningLevels.map(({ effort }) => effort),
     ["medium", "max"],

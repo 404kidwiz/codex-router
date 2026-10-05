@@ -29,7 +29,11 @@ import { spawnableCommand } from "./spawnable-command.mjs";
 import { ensureOllamaHeadless } from "./ollama-runtime.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
 import { dependencyRepairHint } from "./dependency-repair.mjs";
-import { clearServiceProcessState, writeServiceProcessState } from "./service-process.mjs";
+import {
+  clearServiceProcessState,
+  shouldRecordServiceProcess,
+  writeServiceProcessState,
+} from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
   inheritedProxyEnvironment,
@@ -421,11 +425,14 @@ async function main() {
     router,
   );
 
-  // After router is healthy, refresh the native account catalog and check its
-  // cache plus the installed Codex binary for drift in the background.
-  // This runs async without blocking further startup or waiting for user commands.
+  // Keep the native catalog fresh while the service is alive, including while
+  // Codex Desktop is closed, so its next startup reads newly released models.
+  // The immediate pass also handles an already stale cache after service boot.
   import("./native-catalog-drift.mjs")
-    .then(({ republishOnNativeDrift }) => republishOnNativeDrift())
+    .then(({ republishOnNativeDrift, watchNativeCatalog }) => {
+      watchNativeCatalog();
+      return republishOnNativeDrift();
+    })
     .catch((error) => {
       console.error(`[codex-router] Native drift check failed: ${error.message}`);
     });
@@ -523,8 +530,9 @@ try {
   // cmd/node descendants still own every router port. Record the verified
   // start.mjs identity so the Windows service manager can terminate that tree
   // before it launches a replacement. Other platforms keep their native
-  // supervisor semantics and do not need this marker.
-  if (process.platform === "win32") {
+  // supervisor semantics and do not need this marker, and neither does the
+  // unmanaged foreground supervisor, which the service manager never owns.
+  if (shouldRecordServiceProcess()) {
     writeServiceProcessState();
     serviceProcessRecorded = true;
   }

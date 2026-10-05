@@ -44,7 +44,8 @@ Actions:
 
 Every action spends MiniMax Token Plan quota. Results download next to the
 current directory unless --out names a destination. Add --json for a
-machine-readable result on stdout.`;
+machine-readable result on stdout. Multiple images get numbered suffixes
+before the output extension, or at the end of an extensionless filename.`;
 
 export function parseArgs(argv) {
   const [action, ...rest] = argv;
@@ -270,10 +271,12 @@ async function generateImage(context) {
   const urls = body.data?.image_urls || [];
   if (!urls.length) throw new Error("Image generation returned no images.");
   const files = [];
+  const base = outputPath(context, "jpeg");
+  const extension = path.extname(base);
+  const stem = base.slice(0, base.length - extension.length);
   for (const [index, url] of urls.entries()) {
-    const base = outputPath(context, "jpeg");
     const destination =
-      urls.length === 1 ? base : base.replace(/\.jpeg$/, `-${index + 1}.jpeg`);
+      urls.length === 1 ? base : `${stem}-${index + 1}${extension}`;
     files.push(await download(context, url, destination));
   }
   return { action: "image", urls, files: files.filter(Boolean) };

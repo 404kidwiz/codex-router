@@ -3458,6 +3458,85 @@ test("router inlines an external parent's plaintext task before replaying to nat
   }
 });
 
+test("native router recovers a deferred agents namespace from history", async () => {
+  const nativeRequests = [];
+  const native = await mockServer(async (request, response) => {
+    nativeRequests.push(await bodyJson(request));
+    json(response, 200, { id: "resp_native_close", output: [] });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = {
+    Authorization: "Bearer native-session-token",
+    "chatgpt-account-id": "native-test-account",
+    "Content-Type": "application/json",
+  };
+  const finishedChild = {
+    type: "agent_message",
+    author: "/root/native_regression_probe",
+    recipient: "/root",
+    content: [{
+      type: "input_text",
+      text:
+        "Message Type: FINAL_ANSWER\n" +
+        "Task name: /root\n" +
+        "Sender: /root/native_regression_probe\n" +
+        "Payload:\nfinished",
+    }],
+  };
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const replay = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "gpt-5.6-sol",
+        stream: false,
+        tools: [],
+        input: [
+          {
+            type: "function_call",
+            name: "spawn_agent",
+            namespace: "agents",
+            call_id: "call_spawn",
+            arguments: "{}",
+          },
+          {
+            type: "function_call",
+            name: "wait_agent",
+            namespace: "agents",
+            call_id: "call_wait",
+            arguments: "{}",
+          },
+          finishedChild,
+        ],
+      }),
+    });
+    const replayBody = await replay.text();
+    assert.equal(replay.status, 200, replayBody);
+    const replayed = JSON.parse(replayBody);
+    const injected = replayed.output.find((item) => item?.type === "function_call");
+    assert.deepEqual(
+      { name: injected?.name, namespace: injected?.namespace },
+      { name: "interrupt_agent", namespace: "agents" },
+    );
+    assert.deepEqual(JSON.parse(injected.arguments), {
+      target: "/root/native_regression_probe",
+    });
+
+    assert.equal(nativeRequests.length, 1);
+    assert.deepEqual(nativeRequests[0].tools, []);
+  } finally {
+    await stopChild(router);
+    await closeServer(native.server);
+  }
+});
+
 // A routed subagent cannot mint an OpenAI Fernet token, so Codex stores its
 // readable handoff under `agent_message.content[].encrypted_content` regardless
 // of how the surrounding envelope is rendered. The envelope-matching path only
@@ -13999,6 +14078,93 @@ function genericResponsesReasoningFixture() {
   })}\n`);
   return { dir, providersFile, userModelsFile };
 }
+
+test("generic openai-responses routes downgrade Codex agent handoffs on turns and compaction", async () => {
+  const gatewayBodies = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayBodies.push(await bodyJson(request));
+    json(response, 200, {
+      id: "resp-generic-agent-message",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok" }],
+        },
+      ],
+    });
+  });
+  const fixture = genericResponsesReasoningFixture();
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    MODEL_ROUTER_STATE_DIR: fixture.dir,
+    MODEL_ROUTER_GENERIC_PROVIDERS: fixture.providersFile,
+    MODEL_ROUTER_USER_MODELS: fixture.userModelsFile,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const content = [
+    {
+      type: "input_text",
+      text: "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n",
+    },
+    {
+      type: "encrypted_content",
+      encrypted_content: "Inspect the generic Responses route.",
+    },
+  ];
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    for (const endpoint of ["/responses", "/responses/compact"]) {
+      const response = await fetch(`${routerBase(routerPort)}${endpoint}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${CALLER_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "responses-gateway/thinker",
+          stream: false,
+          input: [
+            {
+              type: "agent_message",
+              id: "amsg_generic",
+              author: "/root",
+              recipient: "/root/worker",
+              content,
+            },
+          ],
+        }),
+      });
+      assert.equal(response.status, 200, `${endpoint}: ${await response.text()}\n${router.testErrors()}`);
+    }
+
+    assert.equal(gatewayBodies.length, 2);
+    for (const [index, body] of gatewayBodies.entries()) {
+      assert.deepEqual(body.input[0], {
+        type: "message",
+        role: "user",
+        content: [
+          content[0],
+          { type: "input_text", text: "Inspect the generic Responses route." },
+        ],
+      });
+      assert.equal(
+        body.input.some((item) => item?.type === "agent_message"),
+        false,
+        index === 0 ? "ordinary turn retained agent_message" : "compaction retained agent_message",
+      );
+    }
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+    rmSync(fixture.dir, { recursive: true, force: true });
+  }
+});
 
 for (const [label, model, generic] of [
   ["a generic openai-responses route", "responses-gateway/thinker", true],
