@@ -274,7 +274,7 @@ export async function finalizeVisionDownload(
   const state = await import("./vision-bridge-state.mjs");
   let adopt = false;
   try {
-    await transactModelOverlayMutation({
+    const publication = await transactModelOverlayMutation({
       files: [state.VISION_BRIDGE_STATE_PATH],
       mutate: () => {
         // The adoption decision belongs inside the same lock as the snapshot:
@@ -289,7 +289,10 @@ export async function finalizeVisionDownload(
       warningOnly: true,
       applyPublication: finalizePublication,
     });
-    return { adopt };
+    return {
+      adopt,
+      ...(publication?.catalogError ? { catalogError: publication.catalogError } : {}),
+    };
   } catch (error) {
     return {
       adopt: false,
