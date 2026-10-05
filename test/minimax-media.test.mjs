@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -92,6 +92,125 @@ test("one image retains the exact requested output filename", async (t) => {
   const result = await runMedia(["image", "--prompt", "a boat", "--out", out], hooks);
   assert.deepEqual(result.files, [out]);
   assert.equal(readFileSync(out, "utf8"), "single-image-bytes");
+});
+
+for (const existing of [false, true]) {
+  test(`a failed media download preserves ${existing ? "the existing output" : "an absent output"}`, async (t) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "mm-atomic-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const out = path.join(directory, "track.mp3");
+    if (existing) writeFileSync(out, "original-track");
+    let reads = 0;
+    const interrupted = new ReadableStream({
+      pull(controller) {
+        if (reads++ === 0) controller.enqueue(new TextEncoder().encode("partial-track"));
+        else controller.error(new Error("connection lost"));
+      },
+    });
+    const { hooks, emitted } = harness([
+      { body: { data: { audio: "https://cdn.example/track.mp3" } } },
+      { stream: interrupted },
+    ]);
+    await assert.rejects(runMedia([
+      "music", "--prompt", "lofi", "--instrumental", "--out", out,
+    ], hooks), /connection lost/);
+    assert.equal(existsSync(out), existing);
+    if (existing) assert.equal(readFileSync(out, "utf8"), "original-track");
+    assert.deepEqual(readdirSync(directory), existing ? ["track.mp3"] : []);
+    assert.deepEqual(emitted, [], "no incomplete download may be announced as saved");
+  });
+}
+
+test("the destination changes only after the media stream completes", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "mm-atomic-complete-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const out = path.join(directory, "picture.png");
+  writeFileSync(out, "old-image");
+  let reads = 0;
+  const stream = new ReadableStream({
+    pull(controller) {
+      assert.equal(readFileSync(out, "utf8"), "old-image");
+      if (reads++ === 0) controller.enqueue(new TextEncoder().encode("new-image"));
+      else controller.close();
+    },
+  });
+  const { hooks } = harness([
+    { body: { data: { image_urls: ["https://cdn.example/image"] } } }, { stream },
+  ]);
+  const result = await runMedia(["image", "--prompt", "a boat", "--out", out], hooks);
+  assert.deepEqual(result.files, [out]);
+  assert.equal(readFileSync(out, "utf8"), "new-image");
+  assert.deepEqual(readdirSync(directory), ["picture.png"]);
+});
+
+test("a failed final rename cleans the download without replacing a directory", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "mm-atomic-rename-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const out = path.join(directory, "directory");
+  // An existing non-empty directory cannot be replaced by a downloaded file.
+  mkdirSync(out);
+  writeFileSync(path.join(out, "keep"), "untouched");
+  const { hooks } = harness([
+    { body: { data: { image_urls: ["https://cdn.example/image"] } } },
+    { stream: streamOf("image-bytes") },
+  ]);
+  await assert.rejects(runMedia(["image", "--prompt", "a boat", "--out", out], hooks));
+  assert.deepEqual(readdirSync(directory), ["directory"]);
+  assert.equal(readFileSync(path.join(out, "keep"), "utf8"), "untouched");
+});
+
+test("atomic replacement retains existing POSIX file permissions", {
+  skip: process.platform === "win32" ? "POSIX permission bits are not a Windows ACL" : false,
+}, async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "mm-atomic-mode-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const out = path.join(directory, "private.mp3");
+  writeFileSync(out, "old");
+  chmodSync(out, 0o640);
+  const { hooks } = harness([
+    { body: { data: { audio: "https://cdn.example/track" } } },
+    { stream: streamOf("new") },
+  ]);
+  const previousUmask = process.umask(0o077);
+  try {
+    await runMedia(["music", "--prompt", "lofi", "--instrumental", "--out", out], hooks);
+  } finally {
+    process.umask(previousUmask);
+  }
+  assert.equal(statSync(out).mode & 0o777, 0o640);
+  assert.equal(readFileSync(out, "utf8"), "new");
+});
+
+test("a failed concurrent download cannot remove a completed result", async (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "mm-atomic-concurrent-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const out = path.join(directory, "shared.mp3");
+  let interrupt;
+  const slow = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("partial"));
+      interrupt = () => controller.error(new Error("first transfer failed"));
+    },
+  });
+  const first = harness([
+    { body: { data: { audio: "https://cdn.example/first" } } }, { stream: slow },
+  ]);
+  const second = harness([
+    { body: { data: { audio: "https://cdn.example/second" } } }, { stream: streamOf("complete") },
+  ]);
+  const args = ["music", "--prompt", "lofi", "--instrumental", "--out", out];
+  const failed = runMedia(args, first.hooks).then(
+    () => assert.fail("the interrupted transfer must reject"),
+    (error) => error,
+  );
+  try {
+    await runMedia(args, second.hooks);
+  } finally {
+    interrupt();
+  }
+  assert.match((await failed).message, /first transfer failed/);
+  assert.equal(readFileSync(out, "utf8"), "complete");
+  assert.deepEqual(readdirSync(directory), ["shared.mp3"]);
 });
 
 test("multiple images share one timestamp in the default output filenames", async (t) => {
