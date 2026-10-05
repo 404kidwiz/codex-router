@@ -1,262 +1,343 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
-import { Readable } from "node:stream";
 import test from "node:test";
 
 import { normalizeAzureOpenAIResponsesRequest } from "../src/azure-openai-compat.mjs";
-import {
-  createResponsesJsonTransform,
-  createResponsesStreamTransform,
-} from "../src/openai-adapters.mjs";
-import { injectSessionModelForSpawnCalls } from "../src/namespace-relay.mjs";
 
-const AZURE = { providerId: "azure-kmamc", route: "/responses" };
-
-function toolsOf(payload) {
-  return payload.tools.map((tool) => tool.type + (tool.name ? ":" + tool.name : ""));
-}
-
-test("A: Azure removes image_gen and translates collaboration while unrelated tools remain", () => {
-  const collaboration = { type: "namespace", name: "collaboration", description: "spawn helpers" };
-  const shell = { type: "function", name: "shell", description: "run commands" };
-  const appThread = { type: "function", name: "codex_app__create_thread" };
-  const payload = {
-    model: "gpt-5.6-sol",
-    input: "hello",
-    tools: [
-      { type: "namespace", name: "image_gen" },
-      collaboration,
-      shell,
-      appThread,
-      { type: "function", name: "my_tool" },
-    ],
+test("azure-kmamc removes image_gen and aliases collaboration for its provider", () => {
+  const imageGen = {
+    type: "namespace",
+    name: "image_gen",
+    tools: [{
+      type: "function",
+      name: "imagegen",
+      parameters: { type: "object" },
+    }],
   };
-  const result = normalizeAzureOpenAIResponsesRequest(payload, AZURE);
-  assert.equal(result, payload);
-  assert.deepEqual(toolsOf(result), [
-    "namespace:agents",
-    "function:shell",
-    "function:codex_app__create_thread",
-    "function:my_tool",
-  ]);
-});
 
-test("B: other providers are untouched", () => {
-  const payload = {
-    model: "gpt-5",
-    tools: [{ type: "image_generation" }, { type: "namespace", name: "image_gen" }],
+  const collaboration = {
+    type: "namespace",
+    name: "collaboration",
+    tools: [{
+      type: "function",
+      name: "spawn_agent",
+      parameters: { type: "object" },
+    }],
   };
-  const before = structuredClone(payload);
-  const result = normalizeAzureOpenAIResponsesRequest(payload, {
-    providerId: "openai",
-    route: "/responses",
-  });
-  assert.equal(result, payload);
-  assert.deepEqual(payload, before);
-});
 
-test("C: only the Azure collaboration namespace changes", () => {
-  const payload = {
-    model: "gpt-5.6-sol",
-    tools: [
-      { type: "namespace", name: "collaboration" },
-      { type: "namespace", name: "shell_tools" },
-      { type: "function", name: "codex_app__wait_threads" },
-    ],
+  const shell = {
+    type: "function",
+    name: "shell",
+    parameters: { type: "object" },
   };
-  const result = normalizeAzureOpenAIResponsesRequest(payload, AZURE);
-  assert.equal(result, payload);
-  assert.deepEqual(payload.tools.map((tool) => tool.name), [
-    "agents", "shell_tools", "codex_app__wait_threads",
-  ]);
-});
 
-test("D: flat image_generation and both function-name forms are removed only on azure-kmamc /responses", () => {
-  const mixed = () => ({
-    model: "gpt-5.6-luna",
+  const payload = {
     tools: [
+      imageGen,
       { type: "image_generation" },
       { type: "function", name: "image_gen.imagegen" },
       { type: "function", name: "image_gen__imagegen" },
-      { type: "function", name: "image_gen.other" },
-      { type: "function", name: "keep_me" },
+      collaboration,
+      shell,
     ],
+  };
+
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
   });
 
-  const azure = mixed();
-  normalizeAzureOpenAIResponsesRequest(azure, AZURE);
-  assert.deepEqual(
-    azure.tools.map((tool) => tool.name ?? tool.type),
-    ["image_gen.other", "keep_me"],
-  );
-
-  // Same payload on another route is untouched.
-  const otherRoute = mixed();
-  const beforeRoute = structuredClone(otherRoute);
-  normalizeAzureOpenAIResponsesRequest(otherRoute, { providerId: "azure-kmamc", route: "/chat/completions" });
-  assert.deepEqual(otherRoute, beforeRoute);
-
-  // Same payload on another provider is untouched.
-  const otherProvider = mixed();
-  const beforeProvider = structuredClone(otherProvider);
-  normalizeAzureOpenAIResponsesRequest(otherProvider, { providerId: "openai", route: "/responses" });
-  assert.deepEqual(otherProvider, beforeProvider);
+  assert.deepEqual(normalized.tools, [{ ...collaboration, name: "agents" }, shell]);
+  assert.equal(payload.tools.length, 6);
 });
 
-test("payloads without tools are returned unchanged", () => {
-  const payload = { model: "gpt-5.6-sol", input: "hi" };
-  assert.equal(normalizeAzureOpenAIResponsesRequest(payload, AZURE), payload);
-  assert.equal(normalizeAzureOpenAIResponsesRequest(undefined, AZURE), undefined);
+test("other providers remain byte-shape untouched", () => {
+  const payload = {
+    tools: [{ type: "namespace", name: "image_gen", tools: [] }],
+  };
+
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "another-provider",
+    route: "/responses",
+  });
+
+  assert.strictEqual(normalized, payload);
 });
 
-test("Azure translates declared collaboration tools, replayed calls, and tool choice", () => {
-  const encrypted = { type: "string", encrypted: true };
-  const messageTool = (name) => ({
+test("other Azure namespaces remain untouched", () => {
+  const collaboration = {
+    type: "namespace",
+    name: "analytics",
+    tools: [{ type: "function", name: "spawn_agent" }],
+  };
+
+  const payload = { tools: [collaboration] };
+
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.strictEqual(normalized, payload);
+});
+
+test("Azure collaboration alias preserves tool history and the caller's request", () => {
+  const collaboration = {
+    type: "namespace",
+    name: "collaboration",
+    tools: [
+      { type: "function", name: "spawn_agent", parameters: {
+        type: "object",
+        properties: { message: { type: "string", encrypted: true } },
+      } },
+      { type: "function", name: "wait_agent", parameters: { type: "object" } },
+    ],
+  };
+  const call = {
+    type: "function_call",
+    name: "spawn_agent",
+    namespace: "collaboration",
+    call_id: "call_1",
+    arguments: '{"task_name":"probe","message":"hello"}',
+  };
+  const output = { type: "function_call_output", call_id: "call_1", output: "done" };
+  const payload = {
+    tools: [collaboration],
+    input: [call, output],
+    tool_choice: { type: "function", name: "spawn_agent", namespace: "collaboration" },
+  };
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.equal(normalized.tools[0].name, "agents");
+  assert.deepEqual(normalized.tools[0].tools[0].parameters.properties.message, { type: "string" });
+  assert.deepEqual(normalized.input, [{ ...call, namespace: "agents" }, output]);
+  assert.deepEqual(normalized.tool_choice, { ...payload.tool_choice, namespace: "agents" });
+  assert.equal(payload.tools[0].name, "collaboration");
+  assert.equal(payload.input[0].namespace, "collaboration");
+});
+
+test("Azure collaboration message tools use plaintext schemas without changing other tools", () => {
+  const spawn = {
     type: "function",
-    name,
+    name: "collaboration__spawn_agent",
     parameters: {
       type: "object",
-      properties: { message: encrypted, target: { type: "string" } },
+      properties: {
+        task_name: { type: "string" },
+        message: { type: "string", encrypted: true },
+      },
+      required: ["task_name", "message"],
     },
+  };
+  const shell = {
+    type: "function",
+    name: "exec_command",
+    parameters: {
+      type: "object",
+      properties: { command: { type: "string", encrypted: true } },
+    },
+  };
+  const payload = { tools: [spawn, shell] };
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
   });
-  const unrelated = { type: "function", name: "unrelated", parameters: { encrypted: true } };
-  const payload = {
+
+  assert.deepEqual(normalized.tools[0].parameters.properties.message, { type: "string" });
+  assert.strictEqual(normalized.tools[1], shell);
+  assert.equal(spawn.parameters.properties.message.encrypted, true);
+});
+
+test("Azure nested collaboration namespace uses plaintext message parameters", () => {
+  const collaboration = {
+    type: "namespace",
+    name: "agents",
     tools: [
-      { type: "namespace", name: "collaboration", tools: [
-        messageTool("spawn_agent"),
-        messageTool("send_message"),
-        messageTool("followup_task"),
-        { type: "function", name: "wait_agent", parameters: { encrypted: true } },
-      ] },
-      { type: "function", name: "collaboration__interrupt_agent" },
-      unrelated,
+      { type: "function", name: "spawn_agent", parameters: {
+        type: "object",
+        properties: { message: { type: "string", encrypted: true } },
+      } },
+      { type: "function", name: "wait_agent", parameters: {
+        type: "object",
+        properties: { target: { type: "string", encrypted: true } },
+      } },
     ],
-    input: [
-      { type: "function_call", namespace: "collaboration", name: "spawn_agent", call_id: "a", arguments: "{}" },
-      { type: "function_call_output", call_id: "a", output: "done" },
-      { type: "function_call", name: "collaboration__wait_agent", call_id: "b", arguments: "{}" },
-    ],
-    tool_choice: { type: "allowed_tools", tools: [
-      { type: "function", namespace: "collaboration", name: "spawn_agent" },
-      { type: "function", name: "collaboration__wait_agent" },
-    ] },
   };
-  normalizeAzureOpenAIResponsesRequest(payload, AZURE);
-  assert.equal(payload.tools[0].name, "agents");
-  assert.equal(payload.tools[0].tools[0].parameters.properties.message.encrypted, undefined);
-  assert.equal(payload.tools[0].tools[1].parameters.properties.message.encrypted, undefined);
-  assert.equal(payload.tools[0].tools[2].parameters.properties.message.encrypted, undefined);
-  assert.equal(payload.tools[0].tools[3].parameters.encrypted, true);
-  assert.equal(payload.tools[1].name, "agents__interrupt_agent");
-  assert.equal(payload.tools[2], unrelated);
-  assert.deepEqual(payload.input.map((item) => [item.namespace, item.name, item.call_id]), [
-    ["agents", "spawn_agent", "a"],
-    [undefined, undefined, "a"],
-    [undefined, "agents__wait_agent", "b"],
-  ]);
-  assert.deepEqual(payload.tool_choice.tools, [
-    { type: "function", namespace: "agents", name: "spawn_agent" },
-    { type: "function", name: "agents__wait_agent" },
-  ]);
+  const payload = { tools: [collaboration] };
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.deepEqual(normalized.tools[0].tools[0].parameters.properties.message, { type: "string" });
+  assert.strictEqual(normalized.tools[0].tools[1], collaboration.tools[1]);
+  assert.equal(collaboration.tools[0].parameters.properties.message.encrypted, true);
 });
 
-test("Azure refuses a collaboration/agents declaration collision before mutation", () => {
+// The route's whole contract is that it is inert unless the request is bound to
+// this one provider on this one endpoint. These lock that in by identity, so a
+// later refactor cannot widen the gate without a failing test.
+test("the Azure normalizer is inert for every other provider and route", () => {
   const payload = {
-    tools: [
-      { type: "namespace", name: "collaboration", tools: [{ type: "function", name: "spawn_agent" }] },
-      { type: "namespace", name: "agents", tools: [{ type: "function", name: "other" }] },
-    ],
-    input: [{ type: "function_call", namespace: "collaboration", name: "spawn_agent", call_id: "a", arguments: "{}" }],
+    tools: [{
+      type: "namespace",
+      name: "collaboration",
+      tools: [{
+        type: "function",
+        name: "spawn_agent",
+        parameters: {
+          type: "object",
+          properties: { message: { type: "string", encrypted: true } },
+        },
+      }],
+    }],
   };
-  const original = structuredClone(payload);
-  assert.throws(
-    () => normalizeAzureOpenAIResponsesRequest(payload, AZURE),
-    (error) => error.status === 400 && /collision/i.test(error.message),
-  );
-  assert.deepEqual(payload, original);
-});
 
-test("Azure does not translate history without a declared collaboration tool", () => {
-  const payload = {
-    tools: [{ type: "namespace", name: "other", tools: [] }],
-    input: [{ type: "function_call", namespace: "collaboration", name: "spawn_agent", call_id: "a", arguments: "{}" }],
-  };
-  const original = structuredClone(payload);
-  assert.equal(normalizeAzureOpenAIResponsesRequest(payload, AZURE), payload);
-  assert.deepEqual(payload, original);
-});
-
-test("Azure omits an unrequested spawn model while preserving explicit and local-thread models", () => {
-  const session = { model: "azure-kmamc/gpt-6-sol", preserveDefaultSubagentModel: true };
-  const spawn = { type: "function_call", namespace: "collaboration", name: "spawn_agent", arguments: '{"message":"hi"}' };
-  const explicit = { ...spawn, arguments: '{"model":"azure-kmamc/gpt-6-luna","message":"hi"}' };
-  const thread = { type: "function_call", namespace: "codex_app", name: "create_thread",
-    arguments: '{"prompt":"hi","target":{"type":"projectless"}}' };
-  assert.equal(injectSessionModelForSpawnCalls(spawn, session), spawn);
-  assert.equal(injectSessionModelForSpawnCalls(explicit, session), explicit);
-  assert.equal(
-    JSON.parse(injectSessionModelForSpawnCalls(thread, session).arguments).model,
-    session.model,
-  );
-  assert.equal(
-    JSON.parse(injectSessionModelForSpawnCalls(spawn, session.model).arguments).model,
-    session.model,
-    "other providers retain parent-model injection",
-  );
-});
-
-async function transformed(transform, chunks) {
-  const result = [];
-  transform.on("data", (chunk) => result.push(Buffer.from(chunk)));
-  Readable.from(chunks).pipe(transform);
-  await once(transform, "end");
-  return Buffer.concat(result).toString("utf8");
-}
-
-const collaborationLookup = new Map([
-  ["agents__spawn_agent", { namespace: "collaboration", name: "spawn_agent", plaintextCollaboration: true }],
-  ["agents__send_message", { namespace: "collaboration", name: "send_message", plaintextCollaboration: true }],
-]);
-
-test("Azure response restoration marks only verified plaintext messages", async () => {
-  const output = [
-    { type: "function_call", namespace: "agents", name: "spawn_agent", call_id: "plain",
-      arguments: JSON.stringify({ message: "Read harmless marker AZURE_TEST." }) },
-    { type: "function_call", name: "agents__send_message", call_id: "opaque",
-      arguments: JSON.stringify({ message: "gAAAAABkZmtM7cT9w_XY_zThisIsAnOpaqueBlob==" }) },
-    { type: "function_call", namespace: "agents", name: "spawn_agent", call_id: "no-message",
-      arguments: JSON.stringify({ task_name: "probe" }) },
-  ];
-  const response = JSON.parse(await transformed(
-    createResponsesJsonTransform(collaborationLookup),
-    [JSON.stringify({ id: "resp", output })],
-  ));
-  for (const item of response.output) {
-    assert.equal(item.namespace, "collaboration");
+  for (const providerId of [
+    "deepseek", "openrouter", "kimi", "zai", "grok", "opencode", "commandcode",
+    "minimax", "github-copilot", "meta", "vertex",
+    // Near misses: the gate is an exact match, not a prefix or a fold.
+    "azure-kmamcx", "azure-kmam", "Azure-KMAMC", "",
+  ]) {
+    assert.strictEqual(
+      normalizeAzureOpenAIResponsesRequest(payload, { providerId, route: "/responses" }),
+      payload,
+      `provider ${JSON.stringify(providerId)} must pass through by identity`,
+    );
   }
-  assert.deepEqual(response.output[0].encrypted_function_args, []);
-  assert.equal("encrypted_function_args" in response.output[1], false);
-  assert.equal("encrypted_function_args" in response.output[2], false);
+
+  for (const route of ["/chat/completions", "/messages", "/embeddings", "/decisions", ""]) {
+    assert.strictEqual(
+      normalizeAzureOpenAIResponsesRequest(payload, { providerId: "azure-kmamc", route }),
+      payload,
+      `route ${JSON.stringify(route)} must pass through by identity`,
+    );
+  }
+
+  assert.strictEqual(normalizeAzureOpenAIResponsesRequest(payload), payload);
+  assert.strictEqual(normalizeAzureOpenAIResponsesRequest(payload, {}), payload);
 });
 
-test("Azure streamed restoration covers added, done, and completed items", async () => {
-  const call = { type: "function_call", name: "agents__spawn_agent", call_id: "one",
-    arguments: JSON.stringify({ message: "Fresh plaintext task." }) };
-  const events = [
-    { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
-    { type: "response.output_item.done", output_index: 0, item: call },
-    { type: "response.completed", response: { id: "resp", output: [call] } },
-  ];
-  const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
-  const midpoint = Math.floor(body.length / 2);
-  const output = await transformed(createResponsesStreamTransform(collaborationLookup), [
-    body.slice(0, midpoint), body.slice(midpoint),
-  ]);
-  const restored = output.split("\n").filter((line) => line.startsWith("data: "))
-    .map((line) => JSON.parse(line.slice(6)));
-  assert.equal(restored[0].item.namespace, "collaboration");
-  assert.equal(restored[1].item.namespace, "collaboration");
-  assert.deepEqual(restored[1].item.encrypted_function_args, []);
-  assert.equal(restored[2].response.output[0].namespace, "collaboration");
-  assert.deepEqual(restored[2].response.output[0].encrypted_function_args, []);
+test("normalizing an already-normalized Azure payload is a no-op", () => {
+  const payload = {
+    tools: [{
+      type: "namespace",
+      name: "collaboration",
+      tools: [{
+        type: "function",
+        name: "spawn_agent",
+        parameters: {
+          type: "object",
+          properties: { message: { type: "string", encrypted: true } },
+        },
+      }],
+    }],
+  };
+  const options = { providerId: "azure-kmamc", route: "/responses" };
+
+  const once = normalizeAzureOpenAIResponsesRequest(payload, options);
+  assert.equal(once.tools[0].name, "agents");
+  // A second pass has nothing left to rename or strip, so it must return the
+  // same object rather than allocating an equal one.
+  assert.strictEqual(normalizeAzureOpenAIResponsesRequest(once, options), once);
+});
+
+test("the Azure normalizer never mutates the caller's payload", () => {
+  const spawn = {
+    type: "function",
+    name: "spawn_agent",
+    parameters: {
+      type: "object",
+      properties: { message: { type: "string", encrypted: true } },
+    },
+  };
+  const namespace = { type: "namespace", name: "collaboration", tools: [spawn] };
+  const call = {
+    type: "function_call",
+    name: "spawn_agent",
+    namespace: "collaboration",
+    call_id: "call_1",
+    arguments: '{"task_name":"probe","message":"hello"}',
+  };
+  const payload = {
+    tools: [namespace],
+    input: [call],
+    tool_choice: { type: "function", name: "spawn_agent", namespace: "collaboration" },
+  };
+
+  normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.equal(payload.tools[0].name, "collaboration");
+  assert.equal(spawn.parameters.properties.message.encrypted, true);
+  assert.equal(payload.input[0].namespace, "collaboration");
+  assert.equal(payload.tool_choice.namespace, "collaboration");
+});
+
+test("an Azure request left with no tools omits the key instead of sending an empty list", () => {
+  const payload = {
+    tools: [
+      { type: "image_generation" },
+      { type: "namespace", name: "image_gen", tools: [{ type: "function", name: "imagegen" }] },
+      { type: "function", name: "image_gen.imagegen" },
+      { type: "function", name: "image_gen__imagegen" },
+    ],
+  };
+
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.ok(!("tools" in normalized), "an empty tool list must not be forwarded");
+  assert.equal(payload.tools.length, 4);
+});
+
+test("a flattened Azure collaboration tool keeps its declared name", () => {
+  // Only the schema annotation is Azure's problem; the literal tool name is the
+  // client's own and has no response-side restore, so renaming it here would
+  // hand the caller a tool it never declared.
+  const spawn = {
+    type: "function",
+    name: "collaboration__spawn_agent",
+    parameters: {
+      type: "object",
+      properties: { message: { type: "string", encrypted: true } },
+    },
+  };
+
+  const normalized = normalizeAzureOpenAIResponsesRequest({ tools: [spawn] }, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.equal(normalized.tools[0].name, "collaboration__spawn_agent");
+  assert.equal(normalized.tools[0].parameters.properties.message.encrypted, undefined);
+});
+
+test("Azure history is aliased only when the request declares the namespace", () => {
+  // With no `collaboration` namespace among the tools there is nothing to alias
+  // to, so history and tool choice are left exactly as the caller sent them.
+  const payload = {
+    tools: [{ type: "function", name: "shell", parameters: { type: "object" } }],
+    input: [{
+      type: "function_call",
+      name: "spawn_agent",
+      namespace: "collaboration",
+      call_id: "call_1",
+      arguments: "{}",
+    }],
+    tool_choice: { type: "function", name: "spawn_agent", namespace: "collaboration" },
+  };
+
+  const normalized = normalizeAzureOpenAIResponsesRequest(payload, {
+    providerId: "azure-kmamc",
+    route: "/responses",
+  });
+
+  assert.strictEqual(normalized, payload);
 });

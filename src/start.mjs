@@ -30,7 +30,11 @@ import { spawnableCommand } from "./spawnable-command.mjs";
 import { ensureOllamaHeadless } from "./ollama-runtime.mjs";
 import { venvRuntimeProblem } from "./venv-runtime.mjs";
 import { dependencyRepairHint } from "./dependency-repair.mjs";
-import { clearServiceProcessState, writeServiceProcessState } from "./service-process.mjs";
+import {
+  clearServiceProcessState,
+  shouldRecordServiceProcess,
+  writeServiceProcessState,
+} from "./service-process.mjs";
 import {
   environmentProxyOptedIn,
   inheritedProxyEnvironment,
@@ -408,6 +412,16 @@ async function main() {
       undefined,
       child,
     );
+  // The watchdog's probe is deliberately short: it runs on a timer while the
+  // gateway is otherwise idle, so it must never park the supervisor for the
+  // cold-start budget `gatewayHealthy` is allowed.
+  const gatewayLivenessCheck = () =>
+    waitForHealth(
+      "LiteLLM gateway liveness",
+      loopback(PORTS.gateway, "/health/liveliness"),
+      {},
+      4_000,
+    );
   const gateway = startGateway();
   await gatewayHealthy(gateway);
 
@@ -423,11 +437,14 @@ async function main() {
     router,
   );
 
-  // After router is healthy, refresh the native account catalog and check its
-  // cache plus the installed Codex binary for drift in the background.
-  // This runs async without blocking further startup or waiting for user commands.
+  // Keep the native catalog fresh while the service is alive, including while
+  // Codex Desktop is closed, so its next startup reads newly released models.
+  // The immediate pass also handles an already stale cache after service boot.
   import("./native-catalog-drift.mjs")
-    .then(({ republishOnNativeDrift }) => republishOnNativeDrift())
+    .then(({ republishOnNativeDrift, watchNativeCatalog }) => {
+      watchNativeCatalog();
+      return republishOnNativeDrift();
+    })
     .catch((error) => {
       console.error(`[codex-router] Native drift check failed: ${error.message}`);
     });
@@ -498,6 +515,7 @@ async function main() {
       start: startGateway,
       waitForExit,
       waitForHealth: gatewayHealthy,
+      healthCheck: gatewayLivenessCheck,
       isShuttingDown: () => shuttingDown,
       log: (message) => console.error(`[${frontendService}] ${message}`),
       ...gatewaySupervisorLimits(),
@@ -524,8 +542,9 @@ try {
   // cmd/node descendants still own every router port. Record the verified
   // start.mjs identity so the Windows service manager can terminate that tree
   // before it launches a replacement. Other platforms keep their native
-  // supervisor semantics and do not need this marker.
-  if (process.platform === "win32") {
+  // supervisor semantics and do not need this marker, and neither does the
+  // unmanaged foreground supervisor, which the service manager never owns.
+  if (shouldRecordServiceProcess()) {
     writeServiceProcessState();
     serviceProcessRecorded = true;
   }

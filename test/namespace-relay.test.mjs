@@ -46,6 +46,60 @@ function collect(stream) {
   });
 }
 
+test("Azure plaintext collaboration output carries Codex's explicit plaintext marker", () => {
+  const lookups = buildNamespaceLookups(new Map());
+  const call = {
+    type: "function_call",
+    namespace: "agents",
+    name: "spawn_agent",
+    call_id: "call-azure-agent",
+    arguments: JSON.stringify({ task_name: "probe", message: "Run pwd." }),
+  };
+  const event = { type: "response.output_item.done", item: call };
+  const rewritten = rewriteNamespaceResponsePayload(event, lookups, "azure-kmamc/gpt-6-sol");
+  assert.deepEqual(rewritten?.item.encrypted_function_args, []);
+  assert.equal(
+    rewriteNamespaceResponsePayload(event, lookups, "gpt-6-sol"),
+    undefined,
+  );
+  const ciphertext = { ...call, arguments: JSON.stringify({ message: "gAAAAAopaque=" }) };
+  assert.equal(
+    rewriteNamespaceResponsePayload(
+      { type: "response.output_item.done", item: ciphertext },
+      lookups,
+      "azure-kmamc/gpt-6-sol",
+    ),
+    undefined,
+  );
+});
+
+test("Azure agents wire calls restore the configured collaboration identity", () => {
+  const lookups = buildNamespaceLookups(new Map([
+    ["collaboration", new Set(["spawn_agent", "wait_agent"])],
+  ]));
+  const call = {
+    type: "function_call",
+    namespace: "agents",
+    name: "spawn_agent",
+    call_id: "call_1",
+    arguments: '{"task_name":"probe","message":"Run pwd.","model":"azure-kmamc/gpt-6-luna"}',
+  };
+  const event = { type: "response.output_item.done", item: call };
+  const normalized = rewriteNamespaceResponsePayload(event, lookups, "azure-kmamc/gpt-6-sol");
+
+  assert.deepEqual(normalized.item, {
+    ...call,
+    namespace: "collaboration",
+    encrypted_function_args: [],
+  });
+  const wait = { ...call, name: "wait_agent", arguments: '{"target":"probe"}' };
+  assert.deepEqual(
+    rewriteNamespaceResponsePayload({ ...event, item: wait }, lookups, "azure-kmamc/gpt-6-sol").item,
+    { ...wait, namespace: "collaboration" },
+  );
+  assert.equal(rewriteNamespaceResponsePayload(event, lookups, "gpt-6-sol"), undefined);
+});
+
 function collectBuffer(stream) {
   return new Promise((resolve, reject) => {
     const output = [];
@@ -2160,6 +2214,7 @@ test("tool_search response bridge suppresses function argument events across its
         type: "function_call",
         id: "fc_search_1",
         name: "tool_search",
+        namespace: null,
         call_id: "search-1",
         arguments: "",
       },
@@ -2182,6 +2237,7 @@ test("tool_search response bridge suppresses function argument events across its
         type: "function_call",
         id: "fc_search_1",
         name: "tool_search",
+        namespace: null,
         call_id: "search-1",
         arguments: '{"query":"calendar","limit":2.0}',
       },
@@ -2195,6 +2251,7 @@ test("tool_search response bridge suppresses function argument events across its
             type: "function_call",
             id: "fc_search_1",
             name: "tool_search",
+            namespace: null,
             call_id: "search-1",
             arguments: '{"query":"calendar","limit":2}',
           },
@@ -2234,6 +2291,32 @@ test("tool_search response bridge suppresses function argument events across its
     arguments: { query: "calendar", limit: 2 },
   });
   assert.doesNotMatch(output, /response\.function_call_arguments/u);
+});
+
+test("tool_search response bridge treats provider namespace null as unqualified", () => {
+  const { namespaces } = flattenNamespaceTools([clientToolSearchControl()]);
+  const rewritten = rewriteNamespaceResponsePayload(
+    {
+      output: [{
+        type: "function_call",
+        id: "fc_search_null",
+        name: "tool_search",
+        namespace: null,
+        call_id: "search-null",
+        arguments: '{"query":"calendar"}',
+        status: "completed",
+      }],
+    },
+    buildNamespaceLookups(namespaces),
+  );
+  assert.deepEqual(rewritten?.output?.[0], {
+    type: "tool_search_call",
+    id: "fc_search_null",
+    call_id: "search-null",
+    status: "completed",
+    execution: "client",
+    arguments: { query: "calendar" },
+  });
 });
 
 test("tool_search response bridge fails closed without native control or valid arguments", () => {
@@ -2443,6 +2526,30 @@ test("Responses-native stream keeps an omitted spawn-agent model on its routed p
     message: "verify",
     model: "opencode-go/deepseek-v4-flash",
   });
+});
+
+test("Azure routed spawn leaves an omitted model for Codex's configured subagent default", () => {
+  const lookups = buildNamespaceLookups(new Map([
+    ["collaboration", new Set(["spawn_agent"])],
+  ]));
+  const call = {
+    type: "function_call",
+    namespace: "agents",
+    name: "spawn_agent",
+    call_id: "call_azure_default",
+    arguments: '{"task_name":"curated_luna","message":"Run pwd."}',
+  };
+  const rewritten = rewriteNamespaceResponsePayload(
+    { type: "response.output_item.done", item: call },
+    lookups,
+    "azure-kmamc/gpt-6-sol",
+  );
+  assert.equal(rewritten.item.namespace, "collaboration");
+  assert.deepEqual(JSON.parse(rewritten.item.arguments), {
+    task_name: "curated_luna",
+    message: "Run pwd.",
+  });
+  assert.deepEqual(rewritten.item.encrypted_function_args, []);
 });
 
 test("response transform detects headerless SSE after split framing prelude", async () => {

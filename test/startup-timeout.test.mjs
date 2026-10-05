@@ -36,14 +36,10 @@ test("explicit caller options still win over the environment", async () => {
     timeouts.push(timeout);
     return { error: undefined, status: 0, stderr: "", stdout: "/venv\n" };
   };
-  const env = {
-    CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS: "300000",
-    CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS: "300000",
-  };
-  const originalTimeout = env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS;
-  const originalRetry = env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS;
-  process.env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS = originalTimeout;
-  process.env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS = originalRetry;
+  const originalTimeout = process.env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS;
+  const originalRetry = process.env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS;
+  process.env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS = "300000";
+  process.env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS = "300000";
   try {
     assert.equal(venvRuntimeProblem("python", { spawn }), undefined);
     assert.deepEqual(timeouts, [300_000]);
@@ -53,7 +49,9 @@ test("explicit caller options still win over the environment", async () => {
     );
     assert.deepEqual(timeouts.slice(1), [5_000]);
   } finally {
-    delete process.env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS;
-    delete process.env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS;
+    if (originalTimeout === undefined) delete process.env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS;
+    else process.env.CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS = originalTimeout;
+    if (originalRetry === undefined) delete process.env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS;
+    else process.env.CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS = originalRetry;
   }
 });

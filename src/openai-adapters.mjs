@@ -84,38 +84,22 @@ function restoreNamespacedFunctionCall(call, flatToNative) {
   const callName = call.name;
   if (typeof callName !== "string") return call;
   
-  const native = flatToNative.get(
-    call.namespace ? `${call.namespace}${NAMESPACE_DELIMITER}${callName}` : callName,
-  );
+  const native = flatToNative.get(callName);
   if (!native) return call;
-
-  const restored = {
+  
+  // Return the call with namespace restored and flattened name removed
+  return {
     ...call,
     name: native.name,
     namespace: native.namespace,
   };
-  if (
-    native.plaintextCollaboration === true &&
-    ["spawn_agent", "send_message", "followup_task"].includes(native.name) &&
-    restored.encrypted_function_args === undefined &&
-    typeof restored.arguments === "string"
-  ) {
-    let message;
-    try {
-      message = JSON.parse(restored.arguments)?.message;
-    } catch {
-      // An incomplete call cannot prove a plaintext message.
-    }
-    if (
-      typeof message === "string" && message.trim() &&
-      !/^gAAAAA[A-Za-z0-9_-]+={0,2}$/.test(message) &&
-      !/^[A-Za-z0-9+/_=-]{40,}$/.test(message) &&
-      !/[\u0000-\u001f]/.test(message)
-    ) {
-      restored.encrypted_function_args = [];
-    }
-  }
-  return restored;
+}
+
+// Only function calls carry a namespace. Everything else is returned by
+// identity so a stream event keeps the bytes it arrived with.
+function restoreFunctionCallNamespace(item, flatToNative) {
+  if (!item || typeof item !== "object" || item.type !== "function_call") return item;
+  return restoreNamespacedFunctionCall(item, flatToNative);
 }
 
 function adapterError(message, code = "invalid_responses_request") {
@@ -376,8 +360,9 @@ function serializeFrame(frame, data = frame.data) {
   return `${lines.join("\n")}\n\n`;
 }
 
-function streamState() {
+function streamState({ pinResponseId = false } = {}) {
   return {
+    pinResponseId,
     responseId: undefined,
     outputIndex: 0,
     itemIndexes: new Map(),
@@ -461,6 +446,12 @@ function normalizeResponsesEvent(frame, state, flatToNative) {
       return invalidStream(state, "The Responses stream changed response IDs.");
     }
     state.responseId ||= responseId;
+  } else if (state.pinResponseId && state.responseId && data.response && typeof data.response === "object") {
+    // GitHub Copilot mints a fresh id for every lifecycle event of one
+    // response. The id announced by `response.created` is the one the client
+    // already holds, so later events are pinned to it on that route only; a
+    // mismatched terminal id from any other upstream still voids the stream.
+    data.response.id = state.responseId;
   }
   if (data.type === "response.output_item.added") {
     const item = data.item && typeof data.item === "object" ? data.item : undefined;
@@ -488,12 +479,17 @@ function normalizeResponsesEvent(frame, state, flatToNative) {
     state.outputIndex = index + 1;
     if (!validOutputIndex(data.output_index)) data.output_index = index;
     
+    // Restore namespace for function call items
+    const restoredAdded = restoreFunctionCallNamespace(item, flatToNative);
+    if (restoredAdded !== item) data.item = restoredAdded;
   }
-  if (
-    (data.type === "response.output_item.added" || data.type === "response.output_item.done") &&
-    data.item?.type === "function_call" && flatToNative?.size > 0
-  ) {
-    data.item = restoreNamespacedFunctionCall(data.item, flatToNative);
+  // The terminal item is the one a client executes, and it is re-sent in full
+  // rather than diffed from `added`. Restoring only `added` left the flattened
+  // name on the call Codex actually ran, so namespace tools answered
+  // "unsupported call" on every Responses route that relays flattened names.
+  if (data.type === "response.output_item.done") {
+    const restoredDone = restoreFunctionCallNamespace(data.item, flatToNative);
+    if (restoredDone !== data.item) data.item = restoredDone;
   }
   if (data.type === "response.function_call_arguments.delta" || data.type === "response.function_call_arguments.done") {
     const key = data.call_id || data.item_id;
@@ -520,16 +516,20 @@ function normalizeResponsesEvent(frame, state, flatToNative) {
       return invalidStream(state, "The Responses completion used a different response ID.");
     }
     if (state.responseId && !data.response.id) data.response.id = state.responseId;
-    if ([...flatToNative.values()].some((native) => native.plaintextCollaboration === true)) {
-      data.response = normalizeResponseBody(data.response, flatToNative);
+    // Non-incremental consumers read the calls off the completion snapshot
+    // instead of the item events, so it has to carry the same restored shape.
+    if (Array.isArray(data.response.output)) {
+      data.response.output = data.response.output.map((item) =>
+        restoreFunctionCallNamespace(item, flatToNative),
+      );
     }
   }
   return serializeFrame(frame, data);
 }
 
-export function createResponsesStreamTransform(flatToNative = new Map()) {
+export function createResponsesStreamTransform(flatToNative = new Map(), options = {}) {
   let buffer = "";
-  const state = streamState();
+  const state = streamState(options);
   const decoder = new TextDecoder();
   const nextBoundary = (value) => {
     const match = /\r?\n\r?\n/.exec(value);

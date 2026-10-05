@@ -1,0 +1,1 @@
+- **Windows background services allow more time for slow VDI startup.** Interpreter, private-file, process-record, and boot-health probes have tunable startup allowances; service stop and restart identity checks retain their existing tight budgets.
