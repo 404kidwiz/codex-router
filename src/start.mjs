@@ -17,7 +17,7 @@ import {
   loopback,
 } from "./paths.mjs";
 import { SHUTDOWN_DRAIN_MS, SHUTDOWN_FLUSH_MS } from "./http-utils.mjs";
-import { runtimeChildEnvironment, startupTimeoutMs } from "./startup-timeout.mjs";
+import { clearStartupTimeouts, runtimeChildEnvironment, startupTimeoutMs } from "./startup-timeout.mjs";
 import { waitForHealth as pollHealth } from "./health-probe.mjs";
 import { describeChildExit, fatalExitFollowUp } from "./fatal-exit.mjs";
 import { gatewaySupervisorLimits, superviseGateway } from "./gateway-supervisor.mjs";
@@ -314,6 +314,8 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stopChildren);
 // inference, and retry timeouts are unaffected.
 const STARTUP_CHILD_HEALTH_TIMEOUT_MS =
   startupTimeoutMs("CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS", 30_000);
+const STARTUP_GATEWAY_HEALTH_TIMEOUT_MS =
+  startupTimeoutMs("CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS", 300_000);
 
 async function main() {
   // These forwarders use separate ports and do not depend on one another.
@@ -410,7 +412,7 @@ async function main() {
       "LiteLLM gateway",
       loopback(PORTS.gateway, "/health/liveliness"),
       { Authorization: `Bearer ${internalKey}` },
-      startupTimeoutMs("CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS", 300_000),
+      STARTUP_GATEWAY_HEALTH_TIMEOUT_MS,
       undefined,
       child,
     );
@@ -438,6 +440,10 @@ async function main() {
     frontendService,
     router,
   );
+
+  // Background publishers inherit this supervisor too. Retire bootstrap
+  // settings before starting them so later private writes keep runtime bounds.
+  clearStartupTimeouts(process.env);
 
   // Keep the native catalog fresh while the service is alive, including while
   // Codex Desktop is closed, so its next startup reads newly released models.

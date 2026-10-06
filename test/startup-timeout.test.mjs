@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearStartupTimeouts,
   runtimeChildEnvironment,
   serviceStartupTimeoutEnvironment,
   startupTimeoutMs,
@@ -19,6 +20,16 @@ test("runtime children never inherit the supervisor's startup-only allowances", 
   };
   assert.deepEqual(runtimeChildEnvironment(env), { PATH: "test-path" });
   assert.equal(env.CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS, "900000");
+});
+
+test("the ready supervisor retires startup settings before background publication", () => {
+  const env = {
+    CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: "900000",
+    CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS: "900000",
+    PATH: "test-path",
+  };
+  assert.equal(clearStartupTimeouts(env), env);
+  assert.deepEqual(env, { PATH: "test-path" });
 });
 
 test("an unset variable keeps the shipped default", () => {

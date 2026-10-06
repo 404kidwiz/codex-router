@@ -38,7 +38,10 @@ export function serviceStartupTimeoutEnvironment(environment = process.env) {
 }
 
 export function runtimeChildEnvironment(env) {
-  const runtime = { ...env };
-  for (const name of Object.keys(STARTUP_TIMEOUT_MAX_MS)) delete runtime[name];
-  return runtime;
+  return clearStartupTimeouts({ ...env });
+}
+
+export function clearStartupTimeouts(env) {
+  for (const name of Object.keys(STARTUP_TIMEOUT_MAX_MS)) delete env[name];
+  return env;
 }
