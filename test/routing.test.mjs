@@ -7796,6 +7796,15 @@ test("router replays verified search history without exposing a new search tool"
     id: "completed-search-history",
     status: "completed",
     action: { type: "search", query: "router contract" },
+  }, {
+    type: "web_search_call", id: "batched-history", status: "completed",
+    action: { type: "search", queries: ["router defaults", "router overrides"] },
+  }, {
+    type: "web_search_call", id: "opened-history", status: "completed",
+    action: { type: "open_page", url: "https://example.com/router" },
+  }, {
+    type: "web_search_call", id: "find-history", status: "failed",
+    action: { type: "find_in_page", url: "https://example.com/router", pattern: "override" },
   }];
 
   try {
@@ -7813,6 +7822,16 @@ test("router replays verified search history without exposing a new search tool"
       request.model === fixture.historyCompatible.gatewayModel &&
       (!Array.isArray(request.tools) || request.tools.every((tool) => tool.type !== "web_search"))
     )));
+    const markers = gatewayRequests[0].input.filter((item) => item.type === "message" && item.role === "assistant");
+    assert.deepEqual(markers.map((item) => item.content[0].text), [
+      "[completed web search: router contract]",
+      '[completed web search: queries=["router defaults","router overrides"]]',
+      "[completed web page open: https://example.com/router]",
+      '[web page find (failed): url="https://example.com/router", pattern="override"]',
+    ]);
+    // Compaction has its own quoted source catalog, which already preserves
+    // action details. Its original structured history remains unchanged.
+    assert.deepEqual(gatewayRequests[1].input.slice(0, history.length), history);
   } finally {
     await stopChild(router);
     await closeServer(gateway.server);

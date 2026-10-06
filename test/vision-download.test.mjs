@@ -159,6 +159,37 @@ test("a stream that ends without success is a failure, not a silent pass", async
   );
 });
 
+test("the final Ollama record is processed without a trailing newline", async () => {
+  const wire = Buffer.from('{"status":"pulling manifest"}\r\n{"status":"success"}');
+  for (const chunks of [[wire], [...wire].map((byte) => Buffer.from([byte]))]) {
+    const progress = [];
+    await streamOllamaPull("model:latest", {
+      fetchImpl: async () => ({ ok: true, body: Readable.from(chunks) }),
+      onProgress: (event) => progress.push(event.detail),
+    });
+    assert.deepEqual(progress, ["pulling manifest", "success"]);
+  }
+});
+
+test("an unterminated final error keeps the daemon's Unicode message", async () => {
+  const message = "Model yüklenemedi 🛑";
+  const wire = Buffer.from(`${JSON.stringify({ status: "success" })}\n${JSON.stringify({ error: message })}`);
+  await assert.rejects(streamOllamaPull("model:latest", {
+    fetchImpl: async () => ({
+      ok: true,
+      body: Readable.from([...wire].map((byte) => Buffer.from([byte]))),
+    }),
+  }), (error) => error.message === message);
+});
+
+test("a truncated final record cannot manufacture download success", async () => {
+  for (const tail of ['{"status":"suc', '{"status":"pulling manifest"}', " \r\n"]) {
+    await assert.rejects(streamOllamaPull("model:latest", {
+      fetchImpl: async () => ({ ok: true, body: Readable.from([Buffer.from(tail)]) }),
+    }), /ended before Ollama confirmed success/);
+  }
+});
+
 test("an unreachable daemon names the cause", async () => {
   await assert.rejects(
     streamOllamaPull("x", {
