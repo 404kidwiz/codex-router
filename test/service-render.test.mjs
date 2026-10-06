@@ -197,6 +197,68 @@ test("background service definitions render for macOS, Linux, and Windows", () =
   }
 });
 
+test("Windows service renders startup defaults unless valid operator overrides are set", () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-startup-timeouts-"));
+  const settings = [
+    ["CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS", "300000"],
+    ["CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS", "300000"],
+    ["CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS", "900000"],
+    ["CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS", "900000"],
+    ["CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS", "300000"],
+    ["CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS", "900000"],
+  ];
+  const unset = Object.fromEntries(settings.map(([name]) => [name, undefined]));
+  try {
+    const absent = serviceCommand(
+      "service-windows.mjs",
+      "win32",
+      testRoot,
+      "render",
+      "codex",
+      root,
+      unset,
+    );
+    for (const [name] of settings) {
+      assert.doesNotMatch(absent, new RegExp(`set "${name}=`), `${name} must use its consumer default`);
+    }
+
+    const configured = serviceCommand(
+      "service-windows.mjs",
+      "win32",
+      testRoot,
+      "render",
+      "codex",
+      root,
+      Object.fromEntries(settings),
+    );
+    for (const [name, value] of settings) {
+      assert.ok(configured.includes(`set "${name}=${value}"`), `${name} override was not rendered`);
+    }
+
+    for (const invalid of ["12ms", "1.5", "900001", "0"]) {
+      const rejected = serviceCommand(
+        "service-windows.mjs",
+        "win32",
+        testRoot,
+        "render",
+        "codex",
+        root,
+        {
+          ...unset,
+          CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS: invalid,
+        },
+      );
+      assert.doesNotMatch(
+        rejected,
+        /set "CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS=/,
+        `invalid override ${JSON.stringify(invalid)} must not be rendered`,
+      );
+    }
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
 test("background services never copy the Antigravity client secret", () => {
   const testRoot = mkdtempSync(path.join(os.tmpdir(), "codex-router-antigravity-service-"));
   const secret = "test-antigravity-client-secret";

@@ -1,1 +1,1 @@
-- **Windows background services allow more time for slow VDI startup.** Interpreter, private-file, process-record, and boot-health probes have tunable startup allowances; service stop and restart identity checks retain their existing tight budgets.
+- **Windows slow-host startup allowances are opt-in.** Service launchers preserve only explicitly set, validated timeout overrides; without them, each startup probe keeps its shipped default. These bounds affect startup and boot-health waits only, not request or inference timeouts.
