@@ -8,7 +8,7 @@
 //
 // CLI: node src/minimax-media.mjs ACTION [options]
 import { createWriteStream } from "node:fs";
-import { mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -130,8 +130,31 @@ async function download(context, url, destination) {
   if (!response.ok || !response.body) {
     throw new Error(`Download failed: HTTP ${response.status}`);
   }
-  mkdirSync(path.dirname(path.resolve(destination)), { recursive: true });
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(destination));
+  const target = path.resolve(destination);
+  const directory = path.dirname(target);
+  mkdirSync(directory, { recursive: true });
+  // Stage beside the destination so the final rename stays on one filesystem.
+  // A failed transfer must neither truncate an existing result nor leave a
+  // partial file looking like a complete one. Each download owns its staging
+  // directory, including when two commands target the same output path.
+  const staging = mkdtempSync(path.join(directory, ".minimax-download-"));
+  try {
+    let mode;
+    try {
+      const existing = statSync(target);
+      if (existing.isFile()) mode = existing.mode & 0o777;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const temporary = path.join(staging, "download");
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: "wx", mode }));
+    // An existing destination kept its permissions under the old in-place
+    // write. Restore them after the creation umask before replacing it.
+    if (mode !== undefined) chmodSync(temporary, mode);
+    renameSync(temporary, target);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
   return destination;
 }
 
