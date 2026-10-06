@@ -150,6 +150,44 @@ test("service process state is private, readable, and removable", () => {
   }
 });
 
+test("the VDI startup override does not widen runtime ownership probes", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "codex-router-vdi-budget-"));
+  const name = "CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS";
+  const previous = process.env[name];
+  const seen = [];
+  const capture = (value) => (_pid, options) => {
+    seen.push(options.budget);
+    return value;
+  };
+  process.env[name] = "900000";
+  try {
+    const state = writeServiceProcessState({
+      pid: 4242,
+      platform: "win32",
+      identity: capture(identity()),
+      commandLine: capture(commandLine()),
+      sourceRoot: root,
+      stateDir,
+      statePath: path.join(directory, "service-process.json"),
+    });
+    assert.equal(seen.length, 2);
+    assert.ok(seen.every((budget) => budget.timeoutMs === 900_000 && budget.attempts === 2));
+    seen.length = 0;
+    assert.equal(serviceProcessOwns(state, {
+      platform: "win32",
+      identity: capture(identity()),
+      commandLine: capture(commandLine()),
+      sourceRoot: root,
+      stateDir,
+    }), true);
+    assert.deepEqual(seen, [undefined, undefined]);
+  } finally {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 // `codex-router.ps1 start --foreground` enters through src/foreground-start.mjs,
 // whose command line never names src/start.mjs. While the foreground supervisor
 // still claimed this record it failed on every Windows install with a working

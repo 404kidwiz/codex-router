@@ -13,6 +13,7 @@ import {
   processCommandLine,
   processStartIdentity,
 } from "./process-identity.mjs";
+import { startupTimeoutMs } from "./startup-timeout.mjs";
 
 const STATE_VERSION = 1;
 
@@ -90,7 +91,13 @@ export function writeServiceProcessState(options = {}) {
     ...options,
     // The one call site allowed to wait out a cold powershell.exe: this runs
     // before any child starts, and there is no enclosing deadline to outlive.
-    probeBudget: COLD_START_WINDOWS_PROBE_BUDGET,
+    probeBudget: {
+      ...COLD_START_WINDOWS_PROBE_BUDGET,
+      timeoutMs: startupTimeoutMs(
+        "CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS",
+        COLD_START_WINDOWS_PROBE_BUDGET.timeoutMs,
+      ),
+    },
   });
   if (!state) {
     throw new Error(
