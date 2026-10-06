@@ -38,6 +38,7 @@ export function serviceStartupTimeoutEnvironment(environment = process.env) {
 }
 
 export function runtimeChildEnvironment(env) {
-  const { CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: _startupAclTimeout, ...runtime } = env;
+  const runtime = { ...env };
+  for (const name of Object.keys(STARTUP_TIMEOUT_MAX_MS)) delete runtime[name];
   return runtime;
 }

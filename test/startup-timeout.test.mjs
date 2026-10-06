@@ -7,16 +7,17 @@ import {
   startupTimeoutMs,
 } from "../src/startup-timeout.mjs";
 
-test("runtime children never inherit the supervisor's startup ACL allowance", () => {
+test("runtime children never inherit the supervisor's startup-only allowances", () => {
   const env = {
     CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: "900000",
     CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS: "900000",
+    CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS: "900000",
     PATH: "test-path",
   };
-  assert.deepEqual(runtimeChildEnvironment(env), {
-    CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS: "300000",
-    PATH: "test-path",
-  });
+  assert.deepEqual(runtimeChildEnvironment(env), { PATH: "test-path" });
   assert.equal(env.CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS, "900000");
 });
 

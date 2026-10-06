@@ -249,8 +249,8 @@ function run(command, args, extraEnv = {}) {
   const spawnable = spawnableCommand(command, args);
   const child = spawn(spawnable.command, spawnable.args, {
     cwd: SOURCE_ROOT,
-    // Only this supervisor's bootstrap writes may spend the slow-host ACL
-    // allowance. Request handlers and restarted children keep the normal bound.
+    // Only this supervisor consumes startup allowances. Request handlers,
+    // diagnostic subprocesses, and restarted children keep normal runtime bounds.
     env: runtimeChildEnvironment({ ...process.env, ...commonEnv, ...extraEnv }),
     stdio: "inherit",
     ...spawnable.options,
