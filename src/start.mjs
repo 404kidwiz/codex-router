@@ -441,22 +441,6 @@ async function main() {
     router,
   );
 
-  // Background publishers inherit this supervisor too. Retire bootstrap
-  // settings before starting them so later private writes keep runtime bounds.
-  clearStartupTimeouts(process.env);
-
-  // Keep the native catalog fresh while the service is alive, including while
-  // Codex Desktop is closed, so its next startup reads newly released models.
-  // The immediate pass also handles an already stale cache after service boot.
-  import("./native-catalog-drift.mjs")
-    .then(({ republishOnNativeDrift, watchNativeCatalog }) => {
-      watchNativeCatalog();
-      return republishOnNativeDrift();
-    })
-    .catch((error) => {
-      console.error(`[codex-router] Native drift check failed: ${error.message}`);
-    });
-
   if (antigravityStartup.pendingActivationGeneration) {
     const promoted = await attemptAntigravityProbePromotionAfterReadiness({
       generation: antigravityStartup.pendingActivationGeneration,
@@ -474,6 +458,23 @@ async function main() {
       );
     }
   }
+
+  // Pending activation is the last supervisor bootstrap write. Retire startup
+  // settings only after it settles, before publishers can perform runtime writes.
+  clearStartupTimeouts(process.env);
+
+  // Keep the native catalog fresh while the service is alive, including while
+  // Codex Desktop is closed, so its next startup reads newly released models.
+  // The immediate pass also handles an already stale cache after service boot.
+  import("./native-catalog-drift.mjs")
+    .then(({ republishOnNativeDrift, watchNativeCatalog }) => {
+      watchNativeCatalog();
+      return republishOnNativeDrift();
+    })
+    .catch((error) => {
+      console.error(`[codex-router] Native drift check failed: ${error.message}`);
+    });
+
   const cursorEdge = cursorInstalled
     ? run(process.execPath, [path.join(SOURCE_ROOT, "src", "cursor-public-edge.mjs")])
     : undefined;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import {
@@ -30,6 +31,58 @@ test("the ready supervisor retires startup settings before background publicatio
   };
   assert.equal(clearStartupTimeouts(env), env);
   assert.deepEqual(env, { PATH: "test-path" });
+});
+
+test("startup cleanup removes every casing and preserves unrelated environment keys", () => {
+  const settings = serviceStartupTimeoutEnvironment({
+    CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS: "900000",
+    CODEX_ROUTER_VENV_PROBE_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_VENV_PROBE_RETRY_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_WINDOWS_PROCESS_PROBE_TIMEOUT_MS: "900000",
+    CODEX_ROUTER_STARTUP_HEALTH_TIMEOUT_MS: "300000",
+    CODEX_ROUTER_GATEWAY_HEALTH_TIMEOUT_MS: "900000",
+  });
+  const unrelated = {
+    PATH: "test-path",
+    codex_router_unknown_timeout_ms: "123",
+    CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS_SUFFIX: "456",
+  };
+  const env = { ...unrelated };
+  for (const [name, value] of Object.entries(settings)) {
+    env[name] = value;
+    env[name.toLowerCase()] = value;
+    env[name.replace(/_([A-Z])/g, (_match, letter) => `_${letter.toLowerCase()}`)] = value;
+  }
+  const original = { ...env };
+  assert.deepEqual(runtimeChildEnvironment(env), unrelated);
+  assert.deepEqual(env, original, "child filtering must not mutate the supervisor");
+  assert.equal(clearStartupTimeouts(env), env);
+  assert.deepEqual(env, unrelated);
+});
+
+test("Windows runtime children use normal bounds after a mixed-case startup override", {
+  skip: process.platform !== "win32",
+}, () => {
+  const name = "CODEX_ROUTER_WINDOWS_PRIVATE_SYNC_TIMEOUT_MS";
+  const moduleUrl = new URL("../src/startup-timeout.mjs", import.meta.url).href;
+  const script = `import { startupTimeoutMs } from ${JSON.stringify(moduleUrl)};\n` +
+    `console.log(startupTimeoutMs(${JSON.stringify(name)}, 15000));`;
+  const probe = (env) => {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      env,
+      encoding: "utf8",
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    return Number(result.stdout.trim());
+  };
+  for (const spelling of [name.toLowerCase(), "Codex_Router_Windows_Private_Sync_Timeout_Ms"]) {
+    const env = { ...runtimeChildEnvironment(process.env), [spelling]: "900000" };
+    assert.equal(probe(env), 900_000, "control must exercise native Windows lookup");
+    assert.equal(probe(runtimeChildEnvironment(env)), 15_000, spelling);
+  }
 });
 
 test("an unset variable keeps the shipped default", () => {

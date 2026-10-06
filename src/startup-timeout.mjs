@@ -42,6 +42,11 @@ export function runtimeChildEnvironment(env) {
 }
 
 export function clearStartupTimeouts(env) {
-  for (const name of Object.keys(STARTUP_TIMEOUT_MAX_MS)) delete env[name];
+  // Windows preserves environment-key spelling even though lookup is
+  // case-insensitive. A spread copy is a plain object, so remove every
+  // spelling before it becomes a runtime child's native environment.
+  for (const name of Object.keys(env)) {
+    if (Object.hasOwn(STARTUP_TIMEOUT_MAX_MS, name.toUpperCase())) delete env[name];
+  }
   return env;
 }
