@@ -129,11 +129,23 @@ test("DSH capability refresh leaves the harness's own records untouched", () => 
   const route = buildDshRoute({ baseUrl: oldBase, models: [] });
   const settings = applyRouteToSettings("", route);
   const records =
-    "records:\n  client-connection/a:\n    kind: browser-session\n  client-connection/b:\n    kind: browser-session\n";
+    "records:\n  client-connection/a:\n    kind: grant\n    payload: first\n  client-connection/b:\n    kind: grant\n    payload: second\n";
   const credentials = applyCredential(`${records}version: 1\n`, "CODEX_ROUTER_CALLER_KEY", oldSecret);
   const refreshed = refreshDshCallerCapabilityDocuments({ settings, credentials, baseUrl: newBase, secret: newSecret, port: 4202 });
   assert.equal(refreshed.credentials, credentials.replace(oldSecret, newSecret));
   assert.ok(refreshed.credentials.startsWith(records));
+});
+
+test("DSH capability rotation refuses malformed or duplicate records", () => {
+  const route = buildDshRoute({ baseUrl: oldBase, models: [] });
+  const settings = applyRouteToSettings("", route);
+  const prefix = `version: 1\nrefs:\n  CODEX_ROUTER_CALLER_KEY: ${oldSecret}\nrecords:\n  client-connection/session:\n    kind: grant\n    payload:\n`;
+  for (const payload of ["      token: [unfinished\n", '      token: "unfinished\n', "      token: first\n      token: second\n"]) {
+    assert.throws(
+      () => refreshDshCallerCapabilityDocuments({ settings, credentials: prefix + payload, baseUrl: newBase, secret: newSecret, port: 4202 }),
+      /ambiguous YAML/,
+    );
+  }
 });
 
 test("Gemini capability refresh preserves whether a default model was published", () => {

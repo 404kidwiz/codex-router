@@ -127,10 +127,9 @@ function refreshDshSettings(settings, nextBase, port, legacyPort) {
 }
 
 function refreshDshCredentials(credentials, secret) {
-  // The harness's own `records` section stays opaque, exactly as
-  // dsh-config-manager.mjs scans it: its `<scope>/<id>` keys are not ones the
-  // lexer reads, and two records would otherwise collide on their fields.
-  const document = scanYamlDocument(credentials, { opaqueRootKeys: ["records"] });
+  // Match publication's scan so tagged records retain syntax and duplicate-key
+  // checks during rotation as well. Only the caller reference is replaced.
+  const document = scanYamlDocument(credentials, { extendedPlainKeyRoots: ["records"] });
   const wrapped = yamlNode(document, ["refs", DSH_CREDENTIAL_REF]);
   const root = yamlNode(document, [DSH_CREDENTIAL_REF]);
   if (Boolean(wrapped) === Boolean(root)) {

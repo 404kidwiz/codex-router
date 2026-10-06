@@ -245,18 +245,17 @@ function assertCredentialDocument(document, refs, wrapped) {
       continue;
     }
     if (node.key === CREDENTIAL_RECORDS_KEY) {
-      // Scanned as an opaque block, so it reports no children of its own.
-      if (!wrapped && !node.inline && node.endIndex > node.index) nested(node.key);
+      if (!wrapped && node.children.size) nested(node.key);
       continue;
     }
     if (node.children.size) nested(node.key);
   }
 }
 
-// The harness's own `records` section is read as one opaque block: the router
-// owns nothing in it, and its `<scope>/<id>` keys are not ones the lexer reads.
+// Read the harness's scope/id and JSON payload keys without skipping lexical
+// or duplicate-key validation. Publication never splices inside records.
 function scanCredentials(contents) {
-  return scanYamlDocument(contents, { opaqueRootKeys: [CREDENTIAL_RECORDS_KEY] });
+  return scanYamlDocument(contents, { extendedPlainKeyRoots: [CREDENTIAL_RECORDS_KEY] });
 }
 
 function withoutNode(document, node) {

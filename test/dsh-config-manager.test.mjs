@@ -415,7 +415,7 @@ test("the harness's records section is kept byte for byte beside the envelope", 
   const records =
     "records:\n" +
     "  client-connection/browser-session:\n" +
-    "    kind: browser-session\n" +
+    "    kind: grant\n" +
     "    payload:\n" +
     "      secret: session-secret\n" +
     "      version: 2\n";
@@ -429,17 +429,17 @@ test("the harness's records section is kept byte for byte beside the envelope", 
   assert.equal(removeCredential(after, "CODEX_ROUTER_CALLER_KEY"), before);
 });
 
-test("several harness records with the same fields stay one opaque section", () => {
+test("several harness records with the same fields preserve separate mappings", () => {
   // A second stored record repeats `kind` and `payload`. Read as the section's
   // own fields they collided, and every publication was refused again.
   const records =
     "records:\n" +
     "  client-connection/browser-session:\n" +
-    "    kind: browser-session\n" +
+    "    kind: grant\n" +
     "    payload:\n" +
     "      secret: first\n" +
     "  client-connection/second-session:\n" +
-    "    kind: browser-session\n" +
+    "    kind: grant\n" +
     "    payload:\n" +
     "      secret: second\n";
   const before = `${records}refs:\n  OTHER_KEY: existing\nversion: 1\n`;
@@ -463,6 +463,20 @@ test("only the envelope's own records section is exempt from the nesting rule", 
       applyCredential("version: 1\nserver:\n  host: example.com\n", "CODEX_ROUTER_CALLER_KEY", "x"),
     /"server" holds a nested mapping/,
   );
+});
+
+test("credential edits refuse malformed or duplicate harness records", () => {
+  const prefix = "version: 1\nrefs:\n  CODEX_ROUTER_CALLER_KEY: old\nrecords:\n  client-connection/session:\n    kind: grant\n    payload:\n";
+  const invalid = [
+    prefix + "      token: [unfinished\n",
+    prefix + '      token: "unfinished\n',
+    prefix + "      token: first\n      token: second\n",
+    prefix + "      token: first\n  client-connection/session:\n    kind: grant\n    payload: second\n",
+  ];
+  for (const before of invalid) {
+    assert.throws(() => applyCredential(before, "CODEX_ROUTER_CALLER_KEY", "new"), /ambiguous YAML/);
+    assert.throws(() => removeCredential(before, "CODEX_ROUTER_CALLER_KEY"), /ambiguous YAML/);
+  }
 });
 
 test("an inline refs mapping is refused rather than extended", () => {
@@ -594,6 +608,7 @@ test("status finds the credential wherever the writer put it, in every shape", (
     "an empty envelope": "version: 1\nrefs:\n",
     "an envelope with the harness's own key": "version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-aaa\n",
     "an envelope indented four spaces": "version: 1\nrefs:\n    DEEPSEEK_API_KEY: sk-aaa\n",
+    "an envelope with tagged records": "version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-aaa\nrecords:\n  client-connection/session:\n    kind: grant\n    payload:\n      token: test-only-session\n  provider/example:\n    kind: api-key\n    key: test-only-key\n",
     "a legacy root-level document": "DEEPSEEK_API_KEY: sk-aaa\n",
     "an empty file": "",
   };
@@ -628,6 +643,7 @@ test("status finds the credential wherever the writer put it, in every shape", (
       if (initial?.includes("DEEPSEEK_API_KEY")) {
         assert.ok(remaining.includes("DEEPSEEK_API_KEY: sk-aaa"), `${name}: lost another key`);
       }
+      if (initial?.includes("records:")) assert.equal(remaining, initial, `${name}: changed records`);
     } finally {
       rmSync(box.dshHome, { recursive: true, force: true });
       rmSync(box.stateDir, { recursive: true, force: true });
